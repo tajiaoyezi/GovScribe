@@ -1,0 +1,59 @@
+schema: spec-driven
+
+# ============================================================================
+# 项目上下文 context（可选，≤50KB）
+# 注入到所有 artifact（proposal / specs / design / tasks）的生成指令中——
+# 模型生成任何产物时都会看到。完整需求见
+#   docs/prds/intelligent-gov-document-agent.prd.md
+# 完整技术决策见
+#   docs/adr/0001-tech-stack-and-architecture.md
+# 这里只放"定向 + 指针 + 硬约束"，细节去 PRD / ADR 查，避免双份口径。
+# ============================================================================
+context: |
+  语言：中文（简体）。
+  所有产出物（proposal / specs / design / tasks 及其正文）必须用简体中文撰写。
+  例外——技术术语、产品名、标识符保留英文原文，不翻译，如：
+  Go / Golang、React、TypeScript、Ant Design、RAG、NER、LLM、embedding、rerank、
+  Milvus、BM25、PostgreSQL、MinIO、LiteLLM、OnlyOffice、JWT、SSE、RBAC、
+  OIDC / LDAP / CAS、docx / OFD、API、GB/T 9704 等。
+
+  产品：GovScribe —— 智能公文 Agent，面向国企 / 央企 / 政府及事业单位。
+  核心用户：专职文秘 / 办公室综合人员；兼顾业务部门兼职写公文人员。
+  定位：辅助起草，产出"像公文、可直接采纳"的初稿；人工最终把关，绝不自动发文。
+
+  技术栈（权威细节见 ADR-0001）：
+  - 后端 Go，应用层目标单二进制（利信创 / 气隙）；供应商接入用窄抽象封装。
+  - 前端 React + TypeScript + Ant Design；初稿流式输出走 SSE。
+  - 模型接入 MVP 走 LiteLLM Proxy 统一 OpenAI / Anthropic / 私有兼容端点；
+    信创阶段切 Go 直连官方 SDK，业务代码不动。
+  - 检索 Milvus（BM25 + 稠密向量混合检索）；公网提质走 RAG + 提示工程，不微调。
+  - 存储 PostgreSQL（权威源 + 访问控制判定）+ MinIO（范文 / 生成稿，双桶隔离）。
+  - 在线编辑 OnlyOffice Document Server 社区版，JWT 回调 + MinIO 预签名 URL。
+
+  红线与硬约定：
+  - 脱敏网关默认 fail-closed：外置 NER 不可用时绝不静默发原文；涉密恒走私有、永不降级。
+  - 密级路由：非密走公网、敏感走脱敏公网、涉密强制走私有化模型；映射表不出域。
+  - RBAC（管"能做什么操作"）与密级（管"能看 / 能外发什么数据"）两层正交，叠加判定。
+  - MVP 范围之外（已确认后置）：私有化 / 信创部署、GB/T 9704 版式、OA 集成、智能核稿。
+  - 涉及版本号 / 许可 / 信创 PoC 一律引用 ADR-0001，不在产物里另立一套口径。
+
+# ============================================================================
+# 按 artifact 的附加规则 rules（可选）
+# 仅注入到对应 artifact 的指令，叠加在 schema 内置指引之上。
+# spec-driven 的合法 artifact ID 仅 4 个：proposal / specs / design / tasks
+# （写其它 key 会被 openspec 当作未知 artifact 告警）。
+# ============================================================================
+rules:
+  proposal:
+    - 用简体中文撰写；对齐 PRD 的 Delivery Milestones 与 Decisions，不偏离已确认范围。
+    - 明确标注本次变更是否触及保密红线 / 密级路由 / 脱敏，以及是否落在 MVP 范围内。
+  specs:
+    - 需求用"应当 / 必须"（对应 SHALL / MUST）表述；每条需求至少配一个场景。
+    - 场景标题严格用 4 个井号 + "Scenario:" 前缀，采用 WHEN / THEN 结构，确保可测试。
+    - 涉及公文文种的需求，对齐 PRD「文种覆盖矩阵」的 5 档能力阶梯口径。
+  design:
+    - 引用 ADR-0001 的决策编号（D1–D10）与版本 / 许可锚点，不重复维护第二套。
+    - 显式说明对脱敏网关、密级防越权、三库（Postgres / Milvus / MinIO）一致性的影响与权衡。
+  tasks:
+    - 每个任务用 `- [ ] X.Y 描述` 复选框格式、按依赖排序、可独立验证。
+    - 信创 / 私有化高风险项（龙芯 LoongArch64、ARM64 + 麒麟、国产模型效果摸底等）单列为待 PoC 任务。

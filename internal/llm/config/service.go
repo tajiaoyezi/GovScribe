@@ -81,6 +81,7 @@ func (s *Service) Update(ctx context.Context, principal Principal, id string, re
 	if err != nil {
 		return UpdateResult{}, err
 	}
+	previous := cfg
 	changed := false
 	if req.BaseURL != "" {
 		changed = changed || cfg.BaseURL != req.BaseURL
@@ -98,15 +99,18 @@ func (s *Service) Update(ctx context.Context, principal Principal, id string, re
 		cfg.ProbePassed = false
 	}
 	if cfg.IsCurrent && changed {
-		if err := s.probeForCurrent(ctx, &cfg); err != nil {
-			return UpdateResult{}, err
-		}
 		if err := s.syncModelConfig(ctx, cfg); err != nil {
 			return UpdateResult{}, err
+		}
+		if err := s.probeForCurrent(ctx, &cfg); err != nil {
+			return UpdateResult{}, s.restoreModelConfig(ctx, previous, err)
 		}
 	}
 	cfg.UpdatedAt = s.now()
 	if err := s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionUpdate, map[string]string{"current": boolString(cfg.IsCurrent)})); err != nil {
+		if cfg.IsCurrent && changed {
+			return UpdateResult{}, s.restoreModelConfig(ctx, previous, err)
+		}
 		return UpdateResult{}, err
 	}
 	result := UpdateResult{Config: publicConfig(cfg)}
@@ -166,10 +170,10 @@ func (s *Service) SwitchCurrentWithNotice(ctx context.Context, principal Princip
 	if !cfg.Enabled {
 		return SwitchResult{}, ErrConfigDisabled
 	}
-	if err := s.probeForCurrent(ctx, &cfg); err != nil {
+	if err := s.syncModelConfig(ctx, cfg); err != nil {
 		return SwitchResult{}, err
 	}
-	if err := s.syncModelConfig(ctx, cfg); err != nil {
+	if err := s.probeForCurrent(ctx, &cfg); err != nil {
 		return SwitchResult{}, err
 	}
 	cfg.UpdatedAt = s.now()
@@ -249,6 +253,13 @@ func (s *Service) syncModelConfig(ctx context.Context, cfg ModelConfig) error {
 		return nil
 	}
 	return s.syncer.SyncModelConfig(ctx, cfg)
+}
+
+func (s *Service) restoreModelConfig(ctx context.Context, cfg ModelConfig, cause error) error {
+	if err := s.syncModelConfig(ctx, cfg); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
 }
 
 func publicConfig(cfg ModelConfig) PublicModelConfig {

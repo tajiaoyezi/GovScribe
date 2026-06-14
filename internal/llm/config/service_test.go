@@ -354,6 +354,37 @@ func TestSwitchSyncsConfigToProxyBeforeChangingCurrent(t *testing.T) {
 	}
 }
 
+func TestSwitchSyncsConfigToProxyBeforeProbe(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-a", Provider: ProviderOpenAI, BaseURL: "https://a.example/v1",
+		APIKey: "sk-a", Model: "gpt-a", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-b", Provider: ProviderAnthropic, BaseURL: "https://b.example/v1",
+		APIKey: "sk-b", Model: "claude-b", Network: llm.NetworkPrivate, Enabled: true,
+	}); err != nil {
+		t.Fatalf("save target config: %v", err)
+	}
+	var events []string
+	svc := NewServiceWithSyncer(
+		store,
+		allowAuthorizer{},
+		orderedProber{events: &events, result: ProbeResult{Available: true}},
+		orderedSyncer{events: &events},
+	)
+
+	if err := svc.SwitchCurrent(context.Background(), Principal{ID: "admin-1"}, "cfg-b"); err != nil {
+		t.Fatalf("switch current: %v", err)
+	}
+	want := []string{"sync:cfg-b:claude-b", "probe:cfg-b:claude-b"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want sync before probe %#v", events, want)
+	}
+}
+
 func TestSwitchDoesNotChangeCurrentWhenProxySyncFails(t *testing.T) {
 	store := NewMemoryStore()
 	if err := store.Save(context.Background(), ModelConfig{
@@ -380,6 +411,101 @@ func TestSwitchDoesNotChangeCurrentWhenProxySyncFails(t *testing.T) {
 	}
 	if current.ID != "cfg-a" {
 		t.Fatalf("proxy sync failure changed current config to %q, want cfg-a", current.ID)
+	}
+}
+
+func TestUpdateCurrentSyncsCandidateToProxyBeforeProbe(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://old.example/v1",
+		APIKey: "sk-old", Model: "gpt-old", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	var events []string
+	svc := NewServiceWithSyncer(
+		store,
+		allowAuthorizer{},
+		orderedProber{events: &events, result: ProbeResult{Available: true}},
+		orderedSyncer{events: &events},
+	)
+
+	_, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+		BaseURL: "https://new.example/v1",
+		APIKey:  "sk-new",
+		Model:   "gpt-new",
+	})
+	if err != nil {
+		t.Fatalf("update current: %v", err)
+	}
+	want := []string{"sync:cfg-current:gpt-new", "probe:cfg-current:gpt-new"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want sync before probe with candidate config %#v", events, want)
+	}
+}
+
+func TestUpdateCurrentRestoresProxyConfigWhenProbeFails(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://old.example/v1",
+		APIKey: "sk-old", Model: "gpt-old", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	var events []string
+	svc := NewServiceWithSyncer(
+		store,
+		allowAuthorizer{},
+		orderedProber{events: &events, result: ProbeResult{Available: false, ErrorReason: llm.ErrorReasonAuthenticationFailed}},
+		orderedSyncer{events: &events},
+	)
+
+	_, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+		BaseURL: "https://bad.example/v1",
+		APIKey:  "sk-bad",
+		Model:   "gpt-bad",
+	})
+	if !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("update error = %v, want probe failure", err)
+	}
+	want := []string{
+		"sync:cfg-current:gpt-bad",
+		"probe:cfg-current:gpt-bad",
+		"sync:cfg-current:gpt-old",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want candidate probe followed by proxy restore %#v", events, want)
+	}
+}
+
+func TestUpdateCurrentRestoresProxyConfigWhenAuditFails(t *testing.T) {
+	store := newAuditFailingStore(ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://old.example/v1",
+		APIKey: "sk-old", Model: "gpt-old", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	})
+	var events []string
+	svc := NewServiceWithSyncer(
+		store,
+		allowAuthorizer{},
+		orderedProber{events: &events, result: ProbeResult{Available: true}},
+		orderedSyncer{events: &events},
+	)
+
+	_, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+		BaseURL: "https://new.example/v1",
+		APIKey:  "sk-new",
+		Model:   "gpt-new",
+	})
+	if !errors.Is(err, errAuditFailed) {
+		t.Fatalf("update error = %v, want audit failure", err)
+	}
+	want := []string{
+		"sync:cfg-current:gpt-new",
+		"probe:cfg-current:gpt-new",
+		"sync:cfg-current:gpt-old",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want proxy restore after failed local save %#v", events, want)
 	}
 }
 
@@ -471,4 +597,23 @@ func (s *recordingSyncer) SyncModelConfig(_ context.Context, cfg ModelConfig) er
 	}
 	s.configs = append(s.configs, cfg)
 	return nil
+}
+
+type orderedSyncer struct {
+	events *[]string
+}
+
+func (s orderedSyncer) SyncModelConfig(_ context.Context, cfg ModelConfig) error {
+	*s.events = append(*s.events, "sync:"+cfg.ID+":"+cfg.Model)
+	return nil
+}
+
+type orderedProber struct {
+	events *[]string
+	result ProbeResult
+}
+
+func (p orderedProber) Probe(_ context.Context, cfg ModelConfig) ProbeResult {
+	*p.events = append(*p.events, "probe:"+cfg.ID+":"+cfg.Model)
+	return p.result
 }

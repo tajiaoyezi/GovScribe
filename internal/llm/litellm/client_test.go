@@ -1,9 +1,11 @@
 package litellm
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
@@ -168,6 +170,50 @@ func TestModelRegistrySyncsProviderConfigToLiteLLMModelNew(t *testing.T) {
 	}
 }
 
+func TestModelConfigServiceSyncsProxyBeforeProbeOnSwitch(t *testing.T) {
+	var events []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/model/new":
+			events = append(events, "sync")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"success"}`))
+		case "/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode probe request: %v", err)
+			}
+			if body["model"] != "cfg-b" {
+				t.Fatalf("probe model = %#v, want synced config alias cfg-b", body["model"])
+			}
+			events = append(events, "probe")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := config.NewMemoryStore()
+	mustSaveConfig(t, store, config.ModelConfig{
+		ID: "cfg-a", Provider: config.ProviderOpenAI, BaseURL: "https://a.example/v1",
+		APIKey: "sk-a", Model: "gpt-a", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	})
+	mustSaveConfig(t, store, config.ModelConfig{
+		ID: "cfg-b", Provider: config.ProviderAnthropic, BaseURL: "https://b.example/v1",
+		APIKey: "sk-b", Model: "claude-b", Network: llm.NetworkPrivate, Enabled: true,
+	})
+	svc := NewModelConfigService(store, litellmAllowAuthorizer{}, server.URL, "proxy-admin", http.DefaultClient)
+
+	if err := svc.SwitchCurrent(t.Context(), config.Principal{ID: "admin-1"}, "cfg-b"); err != nil {
+		t.Fatalf("switch current: %v", err)
+	}
+	if want := []string{"sync", "probe"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want sync before probe %#v", events, want)
+	}
+}
+
 func TestCompleteInvalidJSONMapsToProviderUpstreamError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -259,4 +305,17 @@ func modelConfig(baseURL string) config.ModelConfig {
 		ID: "cfg-test", Provider: config.ProviderOpenAI, BaseURL: baseURL,
 		APIKey: "sk-test", Model: "gpt-test", Network: llm.NetworkPublic, Enabled: true,
 	}
+}
+
+func mustSaveConfig(t *testing.T, store *config.MemoryStore, cfg config.ModelConfig) {
+	t.Helper()
+	if err := store.Save(t.Context(), cfg); err != nil {
+		t.Fatalf("save config %q: %v", cfg.ID, err)
+	}
+}
+
+type litellmAllowAuthorizer struct{}
+
+func (litellmAllowAuthorizer) Authorize(context.Context, config.Principal, config.Permission) error {
+	return nil
 }

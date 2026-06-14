@@ -46,13 +46,14 @@ const (
 type ErrorReason string
 
 const (
-	ErrorReasonAuthenticationFailed     ErrorReason = "authentication_failed"
-	ErrorReasonEndpointUnavailable      ErrorReason = "endpoint_unavailable"
-	ErrorReasonModelNotFound            ErrorReason = "model_not_found"
-	ErrorReasonTimeout                  ErrorReason = "timeout"
-	ErrorReasonUpstream                 ErrorReason = "upstream_error"
-	ErrorReasonNoAvailablePrivateConfig ErrorReason = "no_available_private_config"
-	ErrorReasonInvalidBackendSelection  ErrorReason = "invalid_backend_selection"
+	ErrorReasonAuthenticationFailed      ErrorReason = "authentication_failed"
+	ErrorReasonEndpointUnavailable       ErrorReason = "endpoint_unavailable"
+	ErrorReasonModelNotFound             ErrorReason = "model_not_found"
+	ErrorReasonTimeout                   ErrorReason = "timeout"
+	ErrorReasonUpstream                  ErrorReason = "upstream_error"
+	ErrorReasonNoAvailablePrivateConfig  ErrorReason = "no_available_private_config"
+	ErrorReasonInvalidBackendSelection   ErrorReason = "invalid_backend_selection"
+	ErrorReasonDesensitizationIncomplete ErrorReason = "desensitization_incomplete"
 )
 
 type GenerationParams struct {

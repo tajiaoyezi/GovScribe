@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tajiaoyezi/GovScribe/internal/desensitization/dictionary"
+	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
 
 func TestRegexRecognizerFindsFormattedEntities(t *testing.T) {
@@ -88,6 +89,27 @@ func TestDictionaryServiceReloadsRecognizerAfterEntryMaintenance(t *testing.T) {
 	}
 }
 
+func TestProcessorMergesNERHitsWithRegexAndDictionary(t *testing.T) {
+	processor := NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+	}), staticNERClient{hits: []Hit{
+		{Start: len("请"), End: len("请张三"), Text: "张三", Type: EntityTypePerson, Source: SourceNER},
+	}})
+
+	messages, result, err := processor.SanitizeMessagesContext(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "请张三联系市财政局。"},
+	})
+	if err != nil {
+		t.Fatalf("sanitize messages with ner: %v", err)
+	}
+	if messages[0].Content != "请〖PERSON_01〗联系〖ORGANIZATION_01〗。" {
+		t.Fatalf("sanitized content = %q", messages[0].Content)
+	}
+	if restored := result.Restore(messages[0].Content); restored != "请张三联系市财政局。" {
+		t.Fatalf("restored content = %q", restored)
+	}
+}
+
 func TestMergeHitsPrefersBlacklistAndLongerContainingSpan(t *testing.T) {
 	hits := []Hit{
 		{Start: 0, End: len("绝密"), Text: "绝密", Type: EntityTypeOrganization, Source: SourceDictionary},
@@ -112,6 +134,15 @@ type dictionaryAllowAuthorizer struct{}
 
 func (dictionaryAllowAuthorizer) Authorize(context.Context, dictionary.Principal, dictionary.Permission) error {
 	return nil
+}
+
+type staticNERClient struct {
+	hits []Hit
+	err  error
+}
+
+func (c staticNERClient) Recognize(context.Context, string) ([]Hit, error) {
+	return c.hits, c.err
 }
 
 func assertHasHit(t *testing.T, hits []Hit, entityType EntityType, source Source, text string) {

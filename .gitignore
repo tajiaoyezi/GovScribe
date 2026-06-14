@@ -1,4 +1,5 @@
 # AI assistant / tooling directories
+.agents/
 .claude/
 .codex/
 .cursor/

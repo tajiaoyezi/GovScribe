@@ -12,10 +12,11 @@ import (
 
 func TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists(t *testing.T) {
 	next := &recordingClient{network: llm.NetworkPublic, response: llm.ChatResponse{Text: "ok", FinishReason: llm.FinishReasonStop}}
+	routes := NewMemoryRouteConfigStore()
 	decorator := NewDecoratorWithRouteResolver(
 		next,
 		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
-		NewMemoryRouteConfigStore(),
+		routes,
 		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
 	)
 
@@ -32,6 +33,7 @@ func TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists(t *testing.T) {
 	if next.lastRequest.Messages[0].Content != "张三负责。" {
 		t.Fatalf("private fallback should not send sanitized public content, got %q", next.lastRequest.Messages[0].Content)
 	}
+	assertLastDisposition(t, routes, DispositionEventRoutePrivate, DispositionReasonNERUnavailablePrivateAvailable)
 }
 
 func TestDecoratorDegradesWithRegexAndDictionaryWhenNERUnavailableAndAllowed(t *testing.T) {
@@ -72,6 +74,7 @@ func TestDecoratorDegradesWithRegexAndDictionaryWhenNERUnavailableAndAllowed(t *
 	if resp.Text != "请市财政局支付1234元。" {
 		t.Fatalf("response text = %q, want restored", resp.Text)
 	}
+	assertLastDisposition(t, routes, DispositionEventDegradedPublic, DispositionReasonNERUnavailableDegradedPublic)
 }
 
 func TestDecoratorTreatsUnprobedPrivateConfigAsUnavailableForNERFallback(t *testing.T) {
@@ -131,10 +134,11 @@ func TestDecoratorTreatsUnprobedPrivateConfigAsUnavailableForNERFallback(t *test
 
 func TestDecoratorBlocksWhenNERUnavailableNoPrivateAndNoDegrade(t *testing.T) {
 	next := &recordingClient{network: llm.NetworkPublic}
+	routes := NewMemoryRouteConfigStore()
 	decorator := NewDecoratorWithRouteResolver(
 		next,
 		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
-		NewMemoryRouteConfigStore(),
+		routes,
 		staticPrivateResolver{},
 	)
 
@@ -148,6 +152,7 @@ func TestDecoratorBlocksWhenNERUnavailableNoPrivateAndNoDegrade(t *testing.T) {
 	if next.lastRequest.Messages != nil {
 		t.Fatalf("blocked request reached upstream: %#v", next.lastRequest)
 	}
+	assertLastDisposition(t, routes, DispositionEventBlocked, DispositionReasonNERUnavailableNoPrivateNoDegrade)
 }
 
 func TestDecoratorNeverDegradesClassifiedWhenNERUnavailable(t *testing.T) {
@@ -172,14 +177,16 @@ func TestDecoratorNeverDegradesClassifiedWhenNERUnavailable(t *testing.T) {
 	if !next.lastRequest.Route.RequirePrivate {
 		t.Fatalf("classified request must force private route, got %#v", next.lastRequest.Route)
 	}
+	assertLastDisposition(t, routes, DispositionEventBlocked, DispositionReasonNoAvailablePrivateConfig)
 }
 
 func TestDecoratorDoesNotRetryPublicWhenPrivateRuntimeFails(t *testing.T) {
 	next := &recordingClient{network: llm.NetworkPublic, err: &llm.ProviderError{Reason: llm.ErrorReasonEndpointUnavailable}}
+	routes := NewMemoryRouteConfigStore()
 	decorator := NewDecoratorWithRouteResolver(
 		next,
 		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
-		NewMemoryRouteConfigStore(),
+		routes,
 		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
 	)
 
@@ -192,6 +199,58 @@ func TestDecoratorDoesNotRetryPublicWhenPrivateRuntimeFails(t *testing.T) {
 	}
 	if next.lastRequest.Route.ConfigID != "cfg-private" || !next.lastRequest.Route.RequirePrivate {
 		t.Fatalf("request should only try private route, got %#v", next.lastRequest.Route)
+	}
+	audits := routes.Audits()
+	if len(audits) != 2 {
+		t.Fatalf("audit count = %d, want route_private and blocked events: %#v", len(audits), audits)
+	}
+	if audits[0].DispositionEvent != DispositionEventRoutePrivate ||
+		audits[0].DispositionReason != DispositionReasonNERUnavailablePrivateAvailable {
+		t.Fatalf("first audit = %#v, want route_private due NER unavailable", audits[0])
+	}
+	if audits[1].DispositionEvent != DispositionEventBlocked ||
+		audits[1].DispositionReason != DispositionReasonPrivateRuntimeFailure {
+		t.Fatalf("second audit = %#v, want blocked private runtime failure", audits[1])
+	}
+}
+
+func TestDecoratorAuditsStreamPrivateRuntimeFailureEvent(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonEndpointUnavailable},
+		},
+	}
+	routes := NewMemoryRouteConfigStore()
+	decorator := NewDecoratorWithRouteResolver(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
+		routes,
+		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
+	)
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	events := collectStreamEvents(stream)
+	if len(events) != 1 || events[0].Type != llm.StreamEventTypeError {
+		t.Fatalf("events = %#v, want one error event", events)
+	}
+	audits := routes.Audits()
+	if len(audits) != 2 {
+		t.Fatalf("audit count = %d, want route_private and blocked events: %#v", len(audits), audits)
+	}
+	if audits[0].DispositionEvent != DispositionEventRoutePrivate ||
+		audits[0].DispositionReason != DispositionReasonNERUnavailablePrivateAvailable {
+		t.Fatalf("first audit = %#v, want route_private due NER unavailable", audits[0])
+	}
+	if audits[1].DispositionEvent != DispositionEventBlocked ||
+		audits[1].DispositionReason != DispositionReasonPrivateRuntimeFailure {
+		t.Fatalf("second audit = %#v, want blocked private runtime failure", audits[1])
 	}
 }
 
@@ -212,4 +271,24 @@ func (r staticPrivateResolver) NetworkForRoute(context.Context, llm.Route) (llm.
 
 func (r staticPrivateResolver) PrivateRoute(context.Context) (llm.Route, bool, error) {
 	return r.route, r.ok, nil
+}
+
+func assertLastDisposition(t *testing.T, routes *MemoryRouteConfigStore, event DispositionEvent, reason DispositionReason) {
+	t.Helper()
+	audits := routes.Audits()
+	if len(audits) == 0 {
+		t.Fatalf("no disposition audit recorded, want %s/%s", event, reason)
+	}
+	last := audits[len(audits)-1]
+	if last.DispositionEvent != event || last.DispositionReason != reason {
+		t.Fatalf("last audit = %#v, want %s/%s", last, event, reason)
+	}
+}
+
+func collectStreamEvents(stream <-chan llm.StreamEvent) []llm.StreamEvent {
+	var events []llm.StreamEvent
+	for event := range stream {
+		events = append(events, event)
+	}
+	return events
 }

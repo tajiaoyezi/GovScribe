@@ -73,6 +73,8 @@ type ChatRequest struct {
 	Params               GenerationParams
 	Route                Route
 	ContentSecurityLevel ContentSecurityLevel
+	ActorID              string
+	RequestID            string
 }
 
 func (r ChatRequest) HasContentSecurityLevel() bool {

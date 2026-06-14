@@ -84,6 +84,7 @@ func (s *RoutePolicyService) authorize(ctx context.Context, principal Principal)
 type MemoryRouteConfigStore struct {
 	mu       sync.RWMutex
 	policies map[llm.ContentSecurityLevel]RoutePolicy
+	audits   []DispositionAuditEntry
 }
 
 func NewMemoryRouteConfigStore() *MemoryRouteConfigStore {
@@ -110,6 +111,21 @@ func (s *MemoryRouteConfigStore) SavePolicy(_ context.Context, policy RoutePolic
 	policy = hardenPolicy(policy)
 	s.policies[policy.Level] = policy
 	return nil
+}
+
+func (s *MemoryRouteConfigStore) AppendDispositionAudit(_ context.Context, entry DispositionAuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audits = append(s.audits, normalizeDispositionAuditEntry(entry))
+	return nil
+}
+
+func (s *MemoryRouteConfigStore) Audits() []DispositionAuditEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]DispositionAuditEntry, len(s.audits))
+	copy(out, s.audits)
+	return out
 }
 
 func defaultRoutePolicies() []RoutePolicy {

@@ -22,7 +22,7 @@ func NewPostgresRouteConfigStore(db *sql.DB) *PostgresRouteConfigStore {
 }
 
 func (s *PostgresRouteConfigStore) GetPolicy(ctx context.Context, level llm.ContentSecurityLevel) (RoutePolicy, error) {
-	row := s.db.QueryRowContext(ctx, selectRoutePolicySQL("WHERE classification = $1"), string(normalizeLevel(level)))
+	row := s.db.QueryRowContext(ctx, selectRoutePolicySQL("WHERE classification = $1"), routePolicyDBLevel(level))
 	policy, err := scanRoutePolicy(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return defaultPolicy(level), nil
@@ -35,6 +35,10 @@ func (s *PostgresRouteConfigStore) GetPolicy(ctx context.Context, level llm.Cont
 
 func (s *PostgresRouteConfigStore) SavePolicy(ctx context.Context, policy RoutePolicy) error {
 	policy = hardenPolicy(policy)
+	var modelConfigID any
+	if policy.ModelConfigID != "" {
+		modelConfigID = policy.ModelConfigID
+	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO security_classification_routes (
 	classification, target_network, model_config_id, allow_degraded_public, updated_by, updated_at
@@ -45,7 +49,7 @@ ON CONFLICT (classification) DO UPDATE SET
 	allow_degraded_public = EXCLUDED.allow_degraded_public,
 	updated_by = EXCLUDED.updated_by,
 	updated_at = EXCLUDED.updated_at`,
-		string(policy.Level), string(policy.TargetNetwork), policy.ModelConfigID,
+		routePolicyDBLevel(policy.Level), string(policy.TargetNetwork), modelConfigID,
 		policy.AllowDegradedPublic, policy.UpdatedBy, policy.UpdatedAt,
 	)
 	return err
@@ -102,10 +106,14 @@ func defaultPolicy(level llm.ContentSecurityLevel) RoutePolicy {
 }
 
 func hardenPolicy(policy RoutePolicy) RoutePolicy {
+	originalTarget := policy.TargetNetwork
 	policy.Level = normalizeLevel(policy.Level)
 	if policy.Level == llm.ContentSecurityLevelClassified || policy.Level == llm.ContentSecurityLevelUnknown {
 		policy.TargetNetwork = llm.NetworkPrivate
 		policy.AllowDegradedPublic = false
+		if originalTarget != llm.NetworkPrivate {
+			policy.ModelConfigID = ""
+		}
 	}
 	return policy
 }

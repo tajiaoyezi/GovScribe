@@ -7,16 +7,25 @@ import (
 )
 
 type Decorator struct {
-	next      llm.Client
-	processor TextProcessor
-	routes    RouteConfigStore
+	next          llm.Client
+	processor     TextProcessor
+	routes        RouteConfigStore
+	routeResolver RouteNetworkResolver
+}
+
+type RouteNetworkResolver interface {
+	NetworkForRoute(context.Context, llm.Route) (llm.Network, error)
 }
 
 func NewDecorator(next llm.Client, processor TextProcessor, routes RouteConfigStore) *Decorator {
+	return NewDecoratorWithRouteResolver(next, processor, routes, nil)
+}
+
+func NewDecoratorWithRouteResolver(next llm.Client, processor TextProcessor, routes RouteConfigStore, resolver RouteNetworkResolver) *Decorator {
 	if routes == nil {
 		routes = NewMemoryRouteConfigStore()
 	}
-	return &Decorator{next: next, processor: processor, routes: routes}
+	return &Decorator{next: next, processor: processor, routes: routes, routeResolver: resolver}
 }
 
 func (d *Decorator) Complete(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
@@ -70,6 +79,12 @@ func (d *Decorator) targetNetwork(ctx context.Context, req llm.ChatRequest) (llm
 	if req.Route.RequirePrivate {
 		return llm.NetworkPrivate, nil
 	}
+	if d.routeResolver != nil {
+		return d.routeResolver.NetworkForRoute(ctx, req.Route)
+	}
+	if req.Route.ConfigID != "" {
+		return llm.NetworkPublic, nil
+	}
 	return d.next.CurrentNetwork(ctx)
 }
 
@@ -85,20 +100,20 @@ func (d *Decorator) prepareRequest(ctx context.Context, req llm.ChatRequest, tar
 		req.Route.RequirePrivate = true
 		if policy.ModelConfigID != "" {
 			req.Route.ConfigID = policy.ModelConfigID
+		} else {
+			req.Route.ConfigID = ""
 		}
 		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
 	}
-	if normalizeLevel(req.ContentSecurityLevel) != llm.ContentSecurityLevelSensitive || d.processor == nil {
+	if d.processor == nil {
+		req.Route.RequirePrivate = true
+		req.Route.ConfigID = ""
 		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
 	}
 
-	var aggregate SanitizationResult
-	for i := range req.Messages {
-		result := d.processor.Sanitize(req.Messages[i].Content)
-		req.Messages[i].Content = result.Text
-		aggregate.Mappings = append(aggregate.Mappings, result.Mappings...)
-	}
-	return req, aggregate, nil
+	messages, result := d.processor.SanitizeMessages(req.Messages)
+	req.Messages = messages
+	return req, result, nil
 }
 
 func joinedMessages(messages []llm.Message) string {

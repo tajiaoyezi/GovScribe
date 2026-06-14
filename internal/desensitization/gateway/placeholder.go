@@ -18,9 +18,28 @@ type SanitizationResult struct {
 	Mappings []Mapping
 }
 
+type PlaceholderMapper struct {
+	byOriginal  map[string]Mapping
+	countByType map[EntityType]int
+	mappings    []Mapping
+}
+
+func NewPlaceholderMapper() *PlaceholderMapper {
+	return &PlaceholderMapper{
+		byOriginal:  make(map[string]Mapping),
+		countByType: make(map[EntityType]int),
+	}
+}
+
 func ApplyPlaceholders(text string, hits []Hit) SanitizationResult {
+	mapper := NewPlaceholderMapper()
+	sanitized := mapper.Apply(text, hits)
+	return SanitizationResult{Text: sanitized, Mappings: mapper.Mappings()}
+}
+
+func (m *PlaceholderMapper) Apply(text string, hits []Hit) string {
 	if len(hits) == 0 {
-		return SanitizationResult{Text: text}
+		return text
 	}
 	sorted := make([]Hit, len(hits))
 	copy(sorted, hits)
@@ -28,9 +47,6 @@ func ApplyPlaceholders(text string, hits []Hit) SanitizationResult {
 
 	var builder strings.Builder
 	cursor := 0
-	byOriginal := map[string]Mapping{}
-	countByType := map[EntityType]int{}
-	mappings := make([]Mapping, 0, len(sorted))
 
 	for _, hit := range sorted {
 		if hit.Start < cursor || hit.Start < 0 || hit.End > len(text) || hit.Start >= hit.End {
@@ -38,23 +54,29 @@ func ApplyPlaceholders(text string, hits []Hit) SanitizationResult {
 		}
 		builder.WriteString(text[cursor:hit.Start])
 		key := string(hit.Type) + "\x00" + hit.Text
-		mapping, ok := byOriginal[key]
+		mapping, ok := m.byOriginal[key]
 		if !ok {
-			countByType[hit.Type]++
+			m.countByType[hit.Type]++
 			mapping = Mapping{
-				Placeholder: placeholderFor(hit.Type, countByType[hit.Type]),
+				Placeholder: placeholderFor(hit.Type, m.countByType[hit.Type]),
 				Original:    hit.Text,
 				Type:        hit.Type,
 				Source:      hit.Source,
 			}
-			byOriginal[key] = mapping
-			mappings = append(mappings, mapping)
+			m.byOriginal[key] = mapping
+			m.mappings = append(m.mappings, mapping)
 		}
 		builder.WriteString(mapping.Placeholder)
 		cursor = hit.End
 	}
 	builder.WriteString(text[cursor:])
-	return SanitizationResult{Text: builder.String(), Mappings: mappings}
+	return builder.String()
+}
+
+func (m *PlaceholderMapper) Mappings() []Mapping {
+	out := make([]Mapping, len(m.mappings))
+	copy(out, m.mappings)
+	return out
 }
 
 func (r SanitizationResult) Restore(text string) string {

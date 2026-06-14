@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/tajiaoyezi/GovScribe/internal/desensitization/dictionary"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
 
@@ -61,6 +62,33 @@ func TestDecoratorDoesNotForceSanitizePrivateTarget(t *testing.T) {
 	}
 }
 
+func TestDecoratorTreatsExplicitConfigIDAsPublicWhenNoResolverIsAvailable(t *testing.T) {
+	next := &recordingClient{
+		network:  llm.NetworkPrivate,
+		response: llm.ChatResponse{Text: "请〖ORGANIZATION_01〗反馈。", FinishReason: llm.FinishReasonStop},
+	}
+	decorator := NewDecorator(next, staticProcessor{
+		result: SanitizationResult{
+			Text: "请〖ORGANIZATION_01〗反馈。",
+			Mappings: []Mapping{
+				{Placeholder: "〖ORGANIZATION_01〗", Original: "市财政局", Type: EntityTypeOrganization, Source: SourceDictionary},
+			},
+		},
+	}, NewMemoryRouteConfigStore())
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局反馈。"}},
+		Route:                llm.Route{ConfigID: "public-config"},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if next.lastRequest.Messages[0].Content != "请〖ORGANIZATION_01〗反馈。" {
+		t.Fatalf("explicit config id request was not sanitized: %#v", next.lastRequest)
+	}
+}
+
 func TestDecoratorRoutesClassifiedAndUnknownToPrivateFailClosed(t *testing.T) {
 	for _, level := range []llm.ContentSecurityLevel{
 		llm.ContentSecurityLevelClassified,
@@ -84,6 +112,102 @@ func TestDecoratorRoutesClassifiedAndUnknownToPrivateFailClosed(t *testing.T) {
 				t.Fatalf("classified or unknown level must require private route: %#v", next.lastRequest.Route)
 			}
 		})
+	}
+}
+
+func TestDecoratorClearsPinnedConfigWhenForcingPrivate(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		err:     llm.ErrNoAvailablePrivateConfig,
+	}
+	decorator := NewDecorator(next, &countingProcessor{}, NewMemoryRouteConfigStore())
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "涉密内容"}},
+		Route:                llm.Route{ConfigID: "public-config"},
+		ContentSecurityLevel: llm.ContentSecurityLevelClassified,
+	})
+	if !errors.Is(err, llm.ErrNoAvailablePrivateConfig) {
+		t.Fatalf("error = %v, want no private config", err)
+	}
+	if !next.lastRequest.Route.RequirePrivate || next.lastRequest.Route.ConfigID != "" {
+		t.Fatalf("forced private route = %#v, want RequirePrivate with cleared ConfigID", next.lastRequest.Route)
+	}
+}
+
+func TestDecoratorFailsClosedWhenProcessorMissingForPublicContent(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		err:     llm.ErrNoAvailablePrivateConfig,
+	}
+	decorator := NewDecorator(next, nil, NewMemoryRouteConfigStore())
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局反馈。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if !errors.Is(err, llm.ErrNoAvailablePrivateConfig) {
+		t.Fatalf("error = %v, want no private config", err)
+	}
+	if !next.lastRequest.Route.RequirePrivate {
+		t.Fatalf("missing processor must force private route, got %#v", next.lastRequest.Route)
+	}
+}
+
+func TestDecoratorUsesOnePlaceholderMappingAcrossAllMessages(t *testing.T) {
+	next := &recordingClient{
+		network:  llm.NetworkPublic,
+		response: llm.ChatResponse{Text: "由〖PERSON_01〗和〖PERSON_02〗负责。", FinishReason: llm.FinishReasonStop},
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "张三", Type: dictionary.EntryTypePerson},
+		{Text: "李四", Type: dictionary.EntryTypePerson},
+	}))
+	decorator := NewDecorator(next, processor, NewMemoryRouteConfigStore())
+
+	resp, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "张三负责材料。"},
+			{Role: llm.RoleUser, Content: "李四负责审核。"},
+		},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if next.lastRequest.Messages[0].Content != "〖PERSON_01〗负责材料。" {
+		t.Fatalf("first message = %q", next.lastRequest.Messages[0].Content)
+	}
+	if next.lastRequest.Messages[1].Content != "〖PERSON_02〗负责审核。" {
+		t.Fatalf("second message = %q", next.lastRequest.Messages[1].Content)
+	}
+	if resp.Text != "由张三和李四负责。" {
+		t.Fatalf("restored response = %q", resp.Text)
+	}
+}
+
+func TestDecoratorProcessesUnclassifiedPublicContent(t *testing.T) {
+	next := &recordingClient{
+		network:  llm.NetworkPublic,
+		response: llm.ChatResponse{Text: "请〖ORGANIZATION_01〗反馈。", FinishReason: llm.FinishReasonStop},
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+	}))
+	decorator := NewDecorator(next, processor, NewMemoryRouteConfigStore())
+
+	resp, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局反馈。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelUnclassified,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if next.lastRequest.Messages[0].Content != "请〖ORGANIZATION_01〗反馈。" {
+		t.Fatalf("unclassified public content skipped processing: %q", next.lastRequest.Messages[0].Content)
+	}
+	if resp.Text != "请市财政局反馈。" {
+		t.Fatalf("restored response = %q", resp.Text)
 	}
 }
 
@@ -121,6 +245,14 @@ func (p staticProcessor) Sanitize(string) SanitizationResult {
 	return p.result
 }
 
+func (p staticProcessor) SanitizeMessages(messages []llm.Message) ([]llm.Message, SanitizationResult) {
+	out := append([]llm.Message(nil), messages...)
+	for i := range out {
+		out[i].Content = p.result.Text
+	}
+	return out, p.result
+}
+
 type countingProcessor struct {
 	calls int
 }
@@ -128,4 +260,12 @@ type countingProcessor struct {
 func (p *countingProcessor) Sanitize(text string) SanitizationResult {
 	p.calls++
 	return SanitizationResult{Text: text}
+}
+
+func (p *countingProcessor) SanitizeMessages(messages []llm.Message) ([]llm.Message, SanitizationResult) {
+	out := append([]llm.Message(nil), messages...)
+	for range out {
+		p.calls++
+	}
+	return out, SanitizationResult{Text: joinedMessages(out)}
 }

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,8 +64,15 @@ func defaultRoutePolicies() []RoutePolicy {
 }
 
 func normalizeLevel(level llm.ContentSecurityLevel) llm.ContentSecurityLevel {
-	if level == "" {
+	if level == "" || strings.EqualFold(string(level), "unknown") {
 		return llm.ContentSecurityLevelUnknown
 	}
 	return level
+}
+
+func routePolicyDBLevel(level llm.ContentSecurityLevel) string {
+	if normalizeLevel(level) == llm.ContentSecurityLevelUnknown {
+		return "unknown"
+	}
+	return string(level)
 }

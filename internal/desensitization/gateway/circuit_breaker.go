@@ -18,8 +18,18 @@ type NERCircuitBreaker struct {
 	now              func() time.Time
 	mu               sync.Mutex
 	failures         int
+	state            nerCircuitState
 	openUntil        time.Time
+	probeInFlight    bool
 }
+
+type nerCircuitState int
+
+const (
+	nerCircuitClosed nerCircuitState = iota
+	nerCircuitOpen
+	nerCircuitHalfOpen
+)
 
 func NewNERCircuitBreaker(client NERClient, cfg NERCircuitBreakerConfig) *NERCircuitBreaker {
 	threshold := cfg.FailureThreshold
@@ -44,24 +54,53 @@ func (b *NERCircuitBreaker) Recognize(ctx context.Context, text string) ([]Hit, 
 	}
 	b.mu.Lock()
 	now := b.now()
-	if !b.openUntil.IsZero() && now.Before(b.openUntil) {
-		b.mu.Unlock()
-		return nil, ErrNERCircuitOpen
+	switch b.state {
+	case nerCircuitOpen:
+		if now.Before(b.openUntil) {
+			b.mu.Unlock()
+			return nil, ErrNERCircuitOpen
+		}
+		b.state = nerCircuitHalfOpen
+	case nerCircuitHalfOpen:
+		if b.probeInFlight {
+			b.mu.Unlock()
+			return nil, ErrNERCircuitOpen
+		}
+	}
+	halfOpenProbe := b.state == nerCircuitHalfOpen
+	if halfOpenProbe {
+		b.probeInFlight = true
 	}
 	b.mu.Unlock()
 
 	hits, err := b.client.Recognize(ctx, text)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if halfOpenProbe {
+		b.probeInFlight = false
+	}
 	now = b.now()
 	if err != nil {
-		b.failures++
-		if b.failures >= b.failureThreshold {
-			b.openUntil = now.Add(b.openInterval)
+		if halfOpenProbe {
+			b.open(now)
+			return nil, err
+		}
+		if b.state == nerCircuitClosed {
+			b.failures++
+			if b.failures >= b.failureThreshold {
+				b.open(now)
+			}
 		}
 		return nil, err
 	}
 	b.failures = 0
+	b.state = nerCircuitClosed
 	b.openUntil = time.Time{}
 	return hits, nil
+}
+
+func (b *NERCircuitBreaker) open(now time.Time) {
+	b.state = nerCircuitOpen
+	b.failures = b.failureThreshold
+	b.openUntil = now.Add(b.openInterval)
 }

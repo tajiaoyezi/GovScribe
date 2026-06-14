@@ -7,6 +7,7 @@ import (
 
 	"github.com/tajiaoyezi/GovScribe/internal/desensitization/dictionary"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
+	"github.com/tajiaoyezi/GovScribe/internal/llm/config"
 )
 
 func TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists(t *testing.T) {
@@ -70,6 +71,61 @@ func TestDecoratorDegradesWithRegexAndDictionaryWhenNERUnavailableAndAllowed(t *
 	}
 	if resp.Text != "请市财政局支付1234元。" {
 		t.Fatalf("response text = %q, want restored", resp.Text)
+	}
+}
+
+func TestDecoratorTreatsUnprobedPrivateConfigAsUnavailableForNERFallback(t *testing.T) {
+	store := config.NewMemoryStore()
+	if err := store.Save(context.Background(), config.ModelConfig{
+		ID:          "cfg-public",
+		Network:     llm.NetworkPublic,
+		Enabled:     true,
+		ProbePassed: true,
+		IsCurrent:   true,
+	}); err != nil {
+		t.Fatalf("save public config: %v", err)
+	}
+	if err := store.Save(context.Background(), config.ModelConfig{
+		ID:          "cfg-private-unprobed",
+		Network:     llm.NetworkPrivate,
+		Enabled:     true,
+		ProbePassed: false,
+	}); err != nil {
+		t.Fatalf("save private config: %v", err)
+	}
+	routes := NewMemoryRouteConfigStore()
+	if err := routes.SavePolicy(context.Background(), RoutePolicy{
+		Level:               llm.ContentSecurityLevelSensitive,
+		TargetNetwork:       llm.NetworkPublic,
+		AllowDegradedPublic: true,
+	}); err != nil {
+		t.Fatalf("save policy: %v", err)
+	}
+	next := &recordingClient{
+		network:  llm.NetworkPublic,
+		response: llm.ChatResponse{Text: "请〖ORGANIZATION_01〗处理。", FinishReason: llm.FinishReasonStop},
+	}
+	decorator := NewDecoratorWithRouteResolver(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+			{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+		}), failingNER{}),
+		routes,
+		NewConfigStoreRouteResolver(store),
+	)
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局处理。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if next.lastRequest.Route.RequirePrivate {
+		t.Fatalf("route = %#v, want degraded public when private config is not probe-passed", next.lastRequest.Route)
+	}
+	if next.lastRequest.Messages[0].Content != "请〖ORGANIZATION_01〗处理。" {
+		t.Fatalf("degraded outbound = %q, want dictionary sanitized", next.lastRequest.Messages[0].Content)
 	}
 }
 

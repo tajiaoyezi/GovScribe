@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -53,6 +54,53 @@ func TestNERCircuitBreakerOpensAfterConsecutiveFailuresAndHalfOpenCloses(t *test
 	}
 }
 
+func TestNERCircuitBreakerAllowsOnlyOneHalfOpenProbe(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ner := newBlockingNER()
+	breaker := NewNERCircuitBreaker(ner, NERCircuitBreakerConfig{
+		FailureThreshold: 1,
+		OpenInterval:     time.Minute,
+	})
+	breaker.now = func() time.Time { return now }
+
+	ner.result <- nerResult{err: ErrNERUnavailable}
+	if _, err := breaker.Recognize(context.Background(), "张三"); !errors.Is(err, ErrNERUnavailable) {
+		t.Fatalf("initial failure error = %v, want ErrNERUnavailable", err)
+	}
+
+	now = now.Add(time.Minute)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = breaker.Recognize(context.Background(), "张三")
+	}()
+	<-ner.started
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := breaker.Recognize(context.Background(), "张三")
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, ErrNERCircuitOpen) {
+			t.Fatalf("concurrent half-open error = %v, want ErrNERCircuitOpen", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		ner.result <- nerResult{hits: []Hit{{Start: 0, End: len("张三"), Text: "张三", Type: EntityTypePerson, Source: SourceNER}}}
+		ner.result <- nerResult{hits: []Hit{{Start: 0, End: len("张三"), Text: "张三", Type: EntityTypePerson, Source: SourceNER}}}
+		err := <-secondDone
+		t.Fatalf("concurrent half-open request called upstream instead of failing fast: %v", err)
+	}
+	if ner.callCount() != 2 {
+		t.Fatalf("calls = %d, want only one half-open probe after initial failure", ner.callCount())
+	}
+
+	ner.result <- nerResult{hits: []Hit{{Start: 0, End: len("张三"), Text: "张三", Type: EntityTypePerson, Source: SourceNER}}}
+	wg.Wait()
+}
+
 type scriptedNER struct {
 	results []nerResult
 	calls   int
@@ -71,4 +119,33 @@ func (n *scriptedNER) Recognize(context.Context, string) ([]Hit, error) {
 	result := n.results[0]
 	n.results = n.results[1:]
 	return result.hits, result.err
+}
+
+type blockingNER struct {
+	started chan struct{}
+	result  chan nerResult
+	mu      sync.Mutex
+	calls   int
+}
+
+func newBlockingNER() *blockingNER {
+	return &blockingNER{
+		started: make(chan struct{}, 10),
+		result:  make(chan nerResult, 10),
+	}
+}
+
+func (n *blockingNER) Recognize(context.Context, string) ([]Hit, error) {
+	n.mu.Lock()
+	n.calls++
+	n.mu.Unlock()
+	n.started <- struct{}{}
+	result := <-n.result
+	return result.hits, result.err
+}
+
+func (n *blockingNER) callCount() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.calls
 }

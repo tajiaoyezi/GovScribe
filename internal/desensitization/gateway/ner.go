@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -14,6 +16,8 @@ var (
 	ErrNERCircuitOpen            = errors.New("ner circuit open")
 	ErrDesensitizationIncomplete = errors.New("desensitization incomplete")
 )
+
+const defaultNERHTTPTimeout = 5 * time.Second
 
 type NERClient interface {
 	Recognize(context.Context, string) ([]Hit, error)
@@ -26,7 +30,11 @@ type HTTPNERClient struct {
 
 func NewHTTPNERClient(endpoint string, httpClient *http.Client) HTTPNERClient {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultNERHTTPTimeout}
+	} else if httpClient.Timeout <= 0 {
+		copied := *httpClient
+		copied.Timeout = defaultNERHTTPTimeout
+		httpClient = &copied
 	}
 	return HTTPNERClient{endpoint: endpoint, httpClient: httpClient}
 }
@@ -51,20 +59,35 @@ func (c HTTPNERClient) Recognize(ctx context.Context, text string) ([]Hit, error
 		return nil, fmt.Errorf("%w: status %d", ErrNERUnavailable, resp.StatusCode)
 	}
 
-	var decoded nerResponse
+	var decoded rawNERResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("%w: decode response: %v", ErrNERUnavailable, err)
 	}
-	hits := make([]Hit, 0, len(decoded.Entities))
-	for _, entity := range decoded.Entities {
-		if entity.Start < 0 || entity.End > len(text) || entity.Start >= entity.End {
-			return nil, fmt.Errorf("%w: invalid span %d-%d", ErrNERUnavailable, entity.Start, entity.End)
+	if len(decoded.Entities) == 0 || string(decoded.Entities) == "null" {
+		return nil, fmt.Errorf("%w: missing entities", ErrNERUnavailable)
+	}
+	var entities []nerEntity
+	if err := json.Unmarshal(decoded.Entities, &entities); err != nil {
+		return nil, fmt.Errorf("%w: decode entities: %v", ErrNERUnavailable, err)
+	}
+	if entities == nil {
+		return nil, fmt.Errorf("%w: missing entities", ErrNERUnavailable)
+	}
+
+	hits := make([]Hit, 0, len(entities))
+	for _, entity := range entities {
+		if entity.Start == nil || entity.End == nil || entity.Type == nil || *entity.Type == "" {
+			return nil, fmt.Errorf("%w: incomplete entity", ErrNERUnavailable)
+		}
+		start, end := *entity.Start, *entity.End
+		if !validNERSpan(text, start, end) {
+			return nil, fmt.Errorf("%w: invalid span %d-%d", ErrNERUnavailable, start, end)
 		}
 		hits = append(hits, Hit{
-			Start:  entity.Start,
-			End:    entity.End,
-			Text:   text[entity.Start:entity.End],
-			Type:   entityTypeFromNER(entity.Type),
+			Start:  start,
+			End:    end,
+			Text:   text[start:end],
+			Type:   entityTypeFromNER(*entity.Type),
 			Source: SourceNER,
 		})
 	}
@@ -75,14 +98,14 @@ type nerRequest struct {
 	Text string `json:"text"`
 }
 
-type nerResponse struct {
-	Entities []nerEntity `json:"entities"`
+type rawNERResponse struct {
+	Entities json.RawMessage `json:"entities"`
 }
 
 type nerEntity struct {
-	Start int    `json:"start"`
-	End   int    `json:"end"`
-	Type  string `json:"type"`
+	Start *int    `json:"start"`
+	End   *int    `json:"end"`
+	Type  *string `json:"type"`
 }
 
 func entityTypeFromNER(entityType string) EntityType {
@@ -96,6 +119,25 @@ func entityTypeFromNER(entityType string) EntityType {
 	default:
 		return EntityTypeNamedEntity
 	}
+}
+
+func validNERSpan(text string, start, end int) bool {
+	if start < 0 || end > len(text) || start >= end {
+		return false
+	}
+	return isUTF8Boundary(text, start) &&
+		isUTF8Boundary(text, end) &&
+		utf8.ValidString(text[start:end])
+}
+
+func isUTF8Boundary(text string, offset int) bool {
+	if offset == 0 || offset == len(text) {
+		return true
+	}
+	if offset < 0 || offset > len(text) {
+		return false
+	}
+	return utf8.RuneStart(text[offset])
 }
 
 func isNERUnavailable(err error) bool {

@@ -39,7 +39,7 @@ func (r ConfigStoreRouteResolver) PrivateRoute(ctx context.Context) (llm.Route, 
 		return llm.Route{}, false, err
 	}
 	for _, cfg := range configs {
-		if cfg.Enabled && cfg.Network == llm.NetworkPrivate {
+		if cfg.Enabled && cfg.ProbePassed && cfg.Network == llm.NetworkPrivate {
 			return llm.Route{ConfigID: cfg.ID, RequirePrivate: true}, true, nil
 		}
 	}

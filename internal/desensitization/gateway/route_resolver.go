@@ -32,3 +32,16 @@ func (r ConfigStoreRouteResolver) NetworkForRoute(ctx context.Context, route llm
 	}
 	return cfg.Network, nil
 }
+
+func (r ConfigStoreRouteResolver) PrivateRoute(ctx context.Context) (llm.Route, bool, error) {
+	configs, err := r.store.List(ctx)
+	if err != nil {
+		return llm.Route{}, false, err
+	}
+	for _, cfg := range configs {
+		if cfg.Enabled && cfg.Network == llm.NetworkPrivate {
+			return llm.Route{ConfigID: cfg.ID, RequirePrivate: true}, true, nil
+		}
+	}
+	return llm.Route{}, false, nil
+}

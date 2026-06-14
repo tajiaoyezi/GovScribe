@@ -17,6 +17,10 @@ type RouteNetworkResolver interface {
 	NetworkForRoute(context.Context, llm.Route) (llm.Network, error)
 }
 
+type PrivateRouteResolver interface {
+	PrivateRoute(context.Context) (llm.Route, bool, error)
+}
+
 func NewDecorator(next llm.Client, processor TextProcessor, routes RouteConfigStore) *Decorator {
 	return NewDecoratorWithRouteResolver(next, processor, routes, nil)
 }
@@ -124,9 +128,60 @@ func (d *Decorator) prepareRequest(ctx context.Context, req llm.ChatRequest, tar
 		req.Route.ConfigID = policy.ModelConfigID
 	}
 
-	messages, result := d.processor.SanitizeMessages(req.Messages)
+	messages, result, err := d.sanitizeMessages(ctx, req.Messages)
+	if isNERUnavailable(err) {
+		return d.prepareNERUnavailable(ctx, req, policy)
+	}
+	if err != nil {
+		return llm.ChatRequest{}, SanitizationResult{}, err
+	}
 	req.Messages = messages
 	return req, result, nil
+}
+
+func (d *Decorator) sanitizeMessages(ctx context.Context, messages []llm.Message) ([]llm.Message, SanitizationResult, error) {
+	if processor, ok := d.processor.(ContextTextProcessor); ok {
+		return processor.SanitizeMessagesContext(ctx, messages)
+	}
+	messages, result := d.processor.SanitizeMessages(messages)
+	return messages, result, nil
+}
+
+func (d *Decorator) prepareNERUnavailable(ctx context.Context, req llm.ChatRequest, policy RoutePolicy) (llm.ChatRequest, SanitizationResult, error) {
+	if route, ok, err := d.privateRoute(ctx); err != nil {
+		return llm.ChatRequest{}, SanitizationResult{}, err
+	} else if ok {
+		req.Route = route
+		req.Route.RequirePrivate = true
+		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
+	}
+
+	if policy.AllowDegradedPublic && canDegrade(policy.Level) {
+		if policy.ModelConfigID != "" {
+			req.Route.ConfigID = policy.ModelConfigID
+		}
+		req.Route.RequirePrivate = false
+		messages, result := d.processor.SanitizeMessages(req.Messages)
+		req.Messages = messages
+		return req, result, nil
+	}
+	return llm.ChatRequest{}, SanitizationResult{}, &llm.ProviderError{
+		Reason: llm.ErrorReasonDesensitizationIncomplete,
+		Err:    ErrDesensitizationIncomplete,
+	}
+}
+
+func (d *Decorator) privateRoute(ctx context.Context) (llm.Route, bool, error) {
+	resolver, ok := d.routeResolver.(PrivateRouteResolver)
+	if !ok || resolver == nil {
+		return llm.Route{}, false, nil
+	}
+	return resolver.PrivateRoute(ctx)
+}
+
+func canDegrade(level llm.ContentSecurityLevel) bool {
+	level = normalizeLevel(level)
+	return level != llm.ContentSecurityLevelClassified && level != llm.ContentSecurityLevelUnknown
 }
 
 func joinedMessages(messages []llm.Message) string {

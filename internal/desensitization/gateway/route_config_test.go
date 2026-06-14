@@ -141,6 +141,44 @@ func TestPostgresRouteConfigStoreHardensLiteralUnknownPolicy(t *testing.T) {
 	}
 }
 
+func TestPostgresRouteConfigStoreAppendsDispositionAudit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewPostgresRouteConfigStore(db)
+	at := time.Unix(1700000000, 0).UTC()
+	mock.ExpectExec("INSERT INTO desensitization_audit_logs").
+		WithArgs(
+			"actor-1",
+			"req-1",
+			string(llm.ContentSecurityLevelSensitive),
+			"{}",
+			"[]",
+			string(DispositionEventBlocked),
+			string(DispositionReasonNERUnavailableNoPrivateNoDegrade),
+			at,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err = store.AppendDispositionAudit(context.Background(), DispositionAuditEntry{
+		ActorID:               "actor-1",
+		RequestID:             "req-1",
+		ContentClassification: llm.ContentSecurityLevelSensitive,
+		DispositionEvent:      DispositionEventBlocked,
+		DispositionReason:     DispositionReasonNERUnavailableNoPrivateNoDegrade,
+		At:                    at,
+	})
+	if err != nil {
+		t.Fatalf("append disposition audit: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
 func TestRoutePolicyServiceRequiresManagePermission(t *testing.T) {
 	svc := NewRoutePolicyService(NewMemoryRouteConfigStore(), denyingRouteAuthorizer{})
 

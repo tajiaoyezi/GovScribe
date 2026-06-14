@@ -55,6 +55,25 @@ ON CONFLICT (classification) DO UPDATE SET
 	return err
 }
 
+func (s *PostgresRouteConfigStore) AppendDispositionAudit(ctx context.Context, entry DispositionAuditEntry) error {
+	entry = normalizeDispositionAuditEntry(entry)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO desensitization_audit_logs (
+	actor_id, request_id, content_classification, original_diff, match_details,
+	disposition_event, disposition_reason, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		entry.ActorID,
+		entry.RequestID,
+		routePolicyDBLevel(entry.ContentClassification),
+		entry.OriginalDiff,
+		entry.MatchDetails,
+		string(entry.DispositionEvent),
+		string(entry.DispositionReason),
+		entry.At,
+	)
+	return err
+}
+
 func selectRoutePolicySQL(suffix string) string {
 	query := "SELECT " + strings.Join(routePolicySelectColumns, ", ") + " FROM security_classification_routes"
 	if suffix != "" {

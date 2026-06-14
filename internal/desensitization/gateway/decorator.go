@@ -1,0 +1,110 @@
+package gateway
+
+import (
+	"context"
+
+	"github.com/tajiaoyezi/GovScribe/internal/llm"
+)
+
+type Decorator struct {
+	next      llm.Client
+	processor TextProcessor
+	routes    RouteConfigStore
+}
+
+func NewDecorator(next llm.Client, processor TextProcessor, routes RouteConfigStore) *Decorator {
+	if routes == nil {
+		routes = NewMemoryRouteConfigStore()
+	}
+	return &Decorator{next: next, processor: processor, routes: routes}
+}
+
+func (d *Decorator) Complete(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
+	target, err := d.targetNetwork(ctx, req)
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
+	prepared, result, err := d.prepareRequest(ctx, req, target)
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
+	resp, err := d.next.Complete(ctx, prepared)
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
+	resp.Text = result.Restore(resp.Text)
+	return resp, nil
+}
+
+func (d *Decorator) Stream(ctx context.Context, req llm.ChatRequest) (<-chan llm.StreamEvent, error) {
+	target, err := d.targetNetwork(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	prepared, result, err := d.prepareRequest(ctx, req, target)
+	if err != nil {
+		return nil, err
+	}
+	upstream, err := d.next.Stream(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan llm.StreamEvent)
+	go func() {
+		defer close(out)
+		for event := range upstream {
+			if event.Type == llm.StreamEventTypeDelta && event.Delta != "" {
+				event.Delta = result.Restore(event.Delta)
+			}
+			out <- event
+		}
+	}()
+	return out, nil
+}
+
+func (d *Decorator) CurrentNetwork(ctx context.Context) (llm.Network, error) {
+	return d.next.CurrentNetwork(ctx)
+}
+
+func (d *Decorator) targetNetwork(ctx context.Context, req llm.ChatRequest) (llm.Network, error) {
+	if req.Route.RequirePrivate {
+		return llm.NetworkPrivate, nil
+	}
+	return d.next.CurrentNetwork(ctx)
+}
+
+func (d *Decorator) prepareRequest(ctx context.Context, req llm.ChatRequest, target llm.Network) (llm.ChatRequest, SanitizationResult, error) {
+	if target == llm.NetworkPrivate {
+		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
+	}
+	policy, err := d.routes.GetPolicy(ctx, normalizeLevel(req.ContentSecurityLevel))
+	if err != nil {
+		return llm.ChatRequest{}, SanitizationResult{}, err
+	}
+	if policy.TargetNetwork == llm.NetworkPrivate {
+		req.Route.RequirePrivate = true
+		if policy.ModelConfigID != "" {
+			req.Route.ConfigID = policy.ModelConfigID
+		}
+		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
+	}
+	if normalizeLevel(req.ContentSecurityLevel) != llm.ContentSecurityLevelSensitive || d.processor == nil {
+		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
+	}
+
+	var aggregate SanitizationResult
+	for i := range req.Messages {
+		result := d.processor.Sanitize(req.Messages[i].Content)
+		req.Messages[i].Content = result.Text
+		aggregate.Mappings = append(aggregate.Mappings, result.Mappings...)
+	}
+	return req, aggregate, nil
+}
+
+func joinedMessages(messages []llm.Message) string {
+	var out string
+	for _, msg := range messages {
+		out += msg.Content
+	}
+	return out
+}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -94,6 +95,83 @@ func TestPostgresStoreWritesAuditDetailsAsJSON(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("append audit: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestPostgresStoreSaveWithAuditUsesOneTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewPostgresStore(db)
+	now := time.Unix(1700000000, 0).UTC()
+	cfg := ModelConfig{
+		ID: "cfg-1", Provider: ProviderOpenAI, BaseURL: "https://api.example/v1",
+		APIKey: "sk-secret", Model: "gpt-test", Network: llm.NetworkPublic,
+		Enabled: true, ProbePassed: true, CreatedAt: now, UpdatedAt: now,
+	}
+	entry := AuditEntry{
+		ActorID: "admin-1", ConfigID: cfg.ID, Action: AuditActionUpdate, At: now,
+		Details: map[string]string{"current": "false"},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO model_provider_configs").
+		WithArgs(cfg.ID, string(cfg.Provider), cfg.BaseURL, cfg.APIKey, cfg.Model, string(cfg.Network), cfg.Enabled, cfg.ProbePassed, cfg.IsCurrent, cfg.CreatedAt, cfg.UpdatedAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO model_provider_config_audits").
+		WithArgs(entry.ActorID, entry.ConfigID, string(entry.Action), `{"current":"false"}`, entry.At).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	if err := store.SaveWithAudit(context.Background(), cfg, entry); err != nil {
+		t.Fatalf("save with audit: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestPostgresStoreSaveAndSetCurrentWithAuditRollsBackOnAuditFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewPostgresStore(db)
+	now := time.Unix(1700000000, 0).UTC()
+	cfg := ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://api.example/v1",
+		APIKey: "sk-secret", Model: "gpt-test", Network: llm.NetworkPublic,
+		Enabled: true, ProbePassed: true, CreatedAt: now, UpdatedAt: now,
+	}
+	entry := AuditEntry{
+		ActorID: "admin-1", ConfigID: cfg.ID, Action: AuditActionSwitch, At: now,
+		Details: map[string]string{"effect": "new_requests"},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO model_provider_configs").
+		WithArgs(cfg.ID, string(cfg.Provider), cfg.BaseURL, cfg.APIKey, cfg.Model, string(cfg.Network), cfg.Enabled, cfg.ProbePassed, cfg.IsCurrent, cfg.CreatedAt, cfg.UpdatedAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE model_provider_configs SET is_current = FALSE").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("UPDATE model_provider_configs SET is_current = TRUE, updated_at = \\$2 WHERE id = \\$1").
+		WithArgs(cfg.ID, cfg.UpdatedAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO model_provider_config_audits").
+		WithArgs(entry.ActorID, entry.ConfigID, string(entry.Action), `{"effect":"new_requests"}`, entry.At).
+		WillReturnError(errAuditFailed)
+	mock.ExpectRollback()
+
+	if err := store.SaveAndSetCurrentWithAudit(context.Background(), cfg, entry); !errors.Is(err, errAuditFailed) {
+		t.Fatalf("save and set current error = %v, want audit failure", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)

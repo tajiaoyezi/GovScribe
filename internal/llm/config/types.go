@@ -33,6 +33,10 @@ type Prober interface {
 	Probe(context.Context, ModelConfig) ProbeResult
 }
 
+type ModelConfigSyncer interface {
+	SyncModelConfig(context.Context, ModelConfig) error
+}
+
 type ProbeResult struct {
 	Available   bool
 	ErrorReason llm.ErrorReason

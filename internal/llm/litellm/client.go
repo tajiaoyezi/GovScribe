@@ -92,7 +92,7 @@ func (c *Client) Stream(ctx context.Context, cfg config.ModelConfig, req llm.Cha
 
 func chatRequestBody(cfg config.ModelConfig, req llm.ChatRequest, stream bool) map[string]any {
 	body := map[string]any{
-		"model":    cfg.Model,
+		"model":    proxyModelName(cfg),
 		"messages": req.Messages,
 		"stream":   stream,
 	}
@@ -103,9 +103,28 @@ func chatRequestBody(cfg config.ModelConfig, req llm.ChatRequest, stream bool) m
 		body["max_tokens"] = *req.Params.MaxTokens
 	}
 	for key, value := range req.Params.Extra {
+		if reservedChatRequestField(key) {
+			continue
+		}
 		body[key] = value
 	}
 	return body
+}
+
+func reservedChatRequestField(key string) bool {
+	switch key {
+	case "model", "messages", "stream", "temperature", "max_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
+func proxyModelName(cfg config.ModelConfig) string {
+	if cfg.ID != "" {
+		return cfg.ID
+	}
+	return cfg.Model
 }
 
 func chatCompletionsURL(baseURL string) string {

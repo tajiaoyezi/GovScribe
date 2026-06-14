@@ -9,6 +9,7 @@
 
 # Backend (Go) build output
 backend/bin/
+.gocache/
 
 # Frontend (Node) artifacts
 frontend/node_modules/

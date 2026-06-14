@@ -3,10 +3,13 @@ package config
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
+
+var errAuditFailed = errors.New("audit failed")
 
 func TestCreateConfigMasksAPIKeyAndWritesSafeAudit(t *testing.T) {
 	store := NewMemoryStore()
@@ -165,7 +168,7 @@ func TestUpdateCurrentConfigRequiresPassingProbeBeforeSaving(t *testing.T) {
 	}
 
 	svc = NewService(store, allowAuthorizer{}, staticProber{result: ProbeResult{Available: true}})
-	updated, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+	result, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
 		BaseURL: "https://new.example/v1",
 		APIKey:  "sk-new",
 		Model:   "gpt-new",
@@ -173,8 +176,15 @@ func TestUpdateCurrentConfigRequiresPassingProbeBeforeSaving(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update current with passing probe: %v", err)
 	}
-	if updated.BaseURL != "https://new.example/v1" || !updated.ProbePassed {
-		t.Fatalf("updated current public view = %#v, want new base URL and probe passed", updated)
+	if result.Config.BaseURL != "https://new.example/v1" || !result.Config.ProbePassed {
+		t.Fatalf("updated current public view = %#v, want new base URL and probe passed", result.Config)
+	}
+}
+
+func TestUpdateReturnsSwitchNoticeResult(t *testing.T) {
+	update := reflect.TypeOf((*Service).Update)
+	if got, want := update.Out(0), reflect.TypeOf(UpdateResult{}); got != want {
+		t.Fatalf("Update first return type = %v, want %v so switch notices cannot be silently discarded", got, want)
 	}
 }
 
@@ -246,8 +256,8 @@ func TestListUpdateAndEnableUseMaskedPublicViews(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update config: %v", err)
 	}
-	if updated.APIKeyMasked == "sk-updated" || updated.Model != "gpt-new" {
-		t.Fatalf("updated public view = %#v, want masked key and new model", updated)
+	if updated.Config.APIKeyMasked == "sk-updated" || updated.Config.Model != "gpt-new" {
+		t.Fatalf("updated public view = %#v, want masked key and new model", updated.Config)
 	}
 
 	if err := svc.Disable(context.Background(), Principal{ID: "admin-1"}, created.ID); err != nil {
@@ -266,6 +276,110 @@ func TestListUpdateAndEnableUseMaskedPublicViews(t *testing.T) {
 	}
 	if configs[0].APIKeyMasked == "sk-updated" || !configs[0].Enabled {
 		t.Fatalf("listed public config = %#v, want masked enabled config", configs[0])
+	}
+}
+
+func TestUpdateDoesNotSaveCandidateWhenAuditFails(t *testing.T) {
+	store := newAuditFailingStore(ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://old.example/v1",
+		APIKey: "sk-old", Model: "gpt-old", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	})
+	svc := NewService(store, allowAuthorizer{}, staticProber{result: ProbeResult{Available: true}})
+
+	_, err := svc.Update(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+		BaseURL: "https://new.example/v1",
+		APIKey:  "sk-new",
+		Model:   "gpt-new",
+	})
+	if !errors.Is(err, errAuditFailed) {
+		t.Fatalf("update error = %v, want audit failure", err)
+	}
+	stored, err := store.Get(context.Background(), "cfg-current")
+	if err != nil {
+		t.Fatalf("get stored config: %v", err)
+	}
+	if stored.BaseURL != "https://old.example/v1" || stored.APIKey != "sk-old" || stored.Model != "gpt-old" {
+		t.Fatalf("audit failure must leave stored config unchanged, got %#v", stored)
+	}
+}
+
+func TestSwitchDoesNotChangeCurrentWhenAuditFails(t *testing.T) {
+	store := newAuditFailingStore(
+		ModelConfig{
+			ID: "cfg-a", Provider: ProviderOpenAI, BaseURL: "https://a.example/v1",
+			APIKey: "sk-a", Model: "gpt-a", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+		},
+		ModelConfig{
+			ID: "cfg-b", Provider: ProviderOpenAI, BaseURL: "https://b.example/v1",
+			APIKey: "sk-b", Model: "gpt-b", Network: llm.NetworkPrivate, Enabled: true, ProbePassed: true,
+		},
+	)
+	svc := NewService(store, allowAuthorizer{}, nil)
+
+	err := svc.SwitchCurrent(context.Background(), Principal{ID: "admin-1"}, "cfg-b")
+	if !errors.Is(err, errAuditFailed) {
+		t.Fatalf("switch error = %v, want audit failure", err)
+	}
+	current, err := store.Current(context.Background())
+	if err != nil {
+		t.Fatalf("get current config: %v", err)
+	}
+	if current.ID != "cfg-a" {
+		t.Fatalf("audit failure changed current config to %q, want cfg-a", current.ID)
+	}
+}
+
+func TestSwitchSyncsConfigToProxyBeforeChangingCurrent(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-a", Provider: ProviderOpenAI, BaseURL: "https://a.example/v1",
+		APIKey: "sk-a", Model: "gpt-a", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-b", Provider: ProviderAnthropic, BaseURL: "https://b.example/v1",
+		APIKey: "sk-b", Model: "claude-b", Network: llm.NetworkPrivate, Enabled: true, ProbePassed: true,
+	}); err != nil {
+		t.Fatalf("save target config: %v", err)
+	}
+	syncer := &recordingSyncer{}
+	svc := NewServiceWithSyncer(store, allowAuthorizer{}, nil, syncer)
+
+	if err := svc.SwitchCurrent(context.Background(), Principal{ID: "admin-1"}, "cfg-b"); err != nil {
+		t.Fatalf("switch current: %v", err)
+	}
+	if len(syncer.configs) != 1 || syncer.configs[0].ID != "cfg-b" || syncer.configs[0].BaseURL != "https://b.example/v1" {
+		t.Fatalf("synced configs = %#v, want target provider config before switch", syncer.configs)
+	}
+}
+
+func TestSwitchDoesNotChangeCurrentWhenProxySyncFails(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-a", Provider: ProviderOpenAI, BaseURL: "https://a.example/v1",
+		APIKey: "sk-a", Model: "gpt-a", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-b", Provider: ProviderAnthropic, BaseURL: "https://b.example/v1",
+		APIKey: "sk-b", Model: "claude-b", Network: llm.NetworkPrivate, Enabled: true, ProbePassed: true,
+	}); err != nil {
+		t.Fatalf("save target config: %v", err)
+	}
+	svc := NewServiceWithSyncer(store, allowAuthorizer{}, nil, &recordingSyncer{err: errors.New("proxy sync failed")})
+
+	err := svc.SwitchCurrent(context.Background(), Principal{ID: "admin-1"}, "cfg-b")
+	if err == nil {
+		t.Fatal("switch current error = nil, want proxy sync failure")
+	}
+	current, err := store.Current(context.Background())
+	if err != nil {
+		t.Fatalf("get current config: %v", err)
+	}
+	if current.ID != "cfg-a" {
+		t.Fatalf("proxy sync failure changed current config to %q, want cfg-a", current.ID)
 	}
 }
 
@@ -318,4 +432,43 @@ type staticProber struct {
 
 func (s staticProber) Probe(context.Context, ModelConfig) ProbeResult {
 	return s.result
+}
+
+type auditFailingStore struct {
+	*MemoryStore
+}
+
+func newAuditFailingStore(configs ...ModelConfig) *auditFailingStore {
+	store := &auditFailingStore{MemoryStore: NewMemoryStore()}
+	for _, cfg := range configs {
+		if err := store.MemoryStore.Save(context.Background(), cfg); err != nil {
+			panic(err)
+		}
+	}
+	return store
+}
+
+func (s *auditFailingStore) AppendAudit(context.Context, AuditEntry) error {
+	return errAuditFailed
+}
+
+func (s *auditFailingStore) SaveWithAudit(context.Context, ModelConfig, AuditEntry) error {
+	return errAuditFailed
+}
+
+func (s *auditFailingStore) SaveAndSetCurrentWithAudit(context.Context, ModelConfig, AuditEntry) error {
+	return errAuditFailed
+}
+
+type recordingSyncer struct {
+	configs []ModelConfig
+	err     error
+}
+
+func (s *recordingSyncer) SyncModelConfig(_ context.Context, cfg ModelConfig) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.configs = append(s.configs, cfg)
+	return nil
 }

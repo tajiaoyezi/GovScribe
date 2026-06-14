@@ -12,6 +12,8 @@ type Store interface {
 	Current(context.Context) (ModelConfig, error)
 	SetCurrent(context.Context, string) error
 	AppendAudit(context.Context, AuditEntry) error
+	SaveWithAudit(context.Context, ModelConfig, AuditEntry) error
+	SaveAndSetCurrentWithAudit(context.Context, ModelConfig, AuditEntry) error
 }
 
 type MemoryStore struct {
@@ -78,6 +80,29 @@ func (s *MemoryStore) SetCurrent(_ context.Context, id string) error {
 func (s *MemoryStore) AppendAudit(_ context.Context, entry AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.audits = append(s.audits, entry)
+	return nil
+}
+
+func (s *MemoryStore) SaveWithAudit(_ context.Context, cfg ModelConfig, entry AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.configs[cfg.ID] = cfg
+	s.audits = append(s.audits, entry)
+	return nil
+}
+
+func (s *MemoryStore) SaveAndSetCurrentWithAudit(_ context.Context, cfg ModelConfig, entry AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.configs[cfg.ID]; !ok {
+		return ErrConfigNotFound
+	}
+	s.configs[cfg.ID] = cfg
+	for cfgID, existing := range s.configs {
+		existing.IsCurrent = cfgID == cfg.ID
+		s.configs[cfgID] = existing
+	}
 	s.audits = append(s.audits, entry)
 	return nil
 }

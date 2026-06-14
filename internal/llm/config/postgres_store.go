@@ -24,7 +24,11 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) Save(ctx context.Context, cfg ModelConfig) error {
-	_, err := s.db.ExecContext(ctx, `
+	return execSaveModelConfig(ctx, s.db, cfg)
+}
+
+func execSaveModelConfig(ctx context.Context, exec sqlExecer, cfg ModelConfig) error {
+	_, err := exec.ExecContext(ctx, `
 INSERT INTO model_provider_configs (
 	id, provider_type, base_url, api_key, model, network,
 	enabled, probe_passed, is_current, created_at, updated_at
@@ -106,6 +110,63 @@ func (s *PostgresStore) SetCurrent(ctx context.Context, id string) error {
 }
 
 func (s *PostgresStore) AppendAudit(ctx context.Context, entry AuditEntry) error {
+	return execAppendAudit(ctx, s.db, entry)
+}
+
+func (s *PostgresStore) SaveWithAudit(ctx context.Context, cfg ModelConfig, entry AuditEntry) error {
+	return s.withTransaction(ctx, func(tx *sql.Tx) error {
+		if err := execSaveModelConfig(ctx, tx, cfg); err != nil {
+			return err
+		}
+		return execAppendAudit(ctx, tx, entry)
+	})
+}
+
+func (s *PostgresStore) SaveAndSetCurrentWithAudit(ctx context.Context, cfg ModelConfig, entry AuditEntry) error {
+	return s.withTransaction(ctx, func(tx *sql.Tx) error {
+		if err := execSaveModelConfig(ctx, tx, cfg); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE model_provider_configs SET is_current = FALSE"); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, "UPDATE model_provider_configs SET is_current = TRUE, updated_at = $2 WHERE id = $1", cfg.ID, cfg.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return ErrConfigNotFound
+		}
+		return execAppendAudit(ctx, tx, entry)
+	})
+}
+
+func (s *PostgresStore) withTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func execAppendAudit(ctx context.Context, exec sqlExecer, entry AuditEntry) error {
 	details := entry.Details
 	if details == nil {
 		details = map[string]string{}
@@ -114,12 +175,16 @@ func (s *PostgresStore) AppendAudit(ctx context.Context, entry AuditEntry) error
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = exec.ExecContext(ctx, `
 INSERT INTO model_provider_config_audits (actor_id, config_id, action, details, created_at)
 VALUES ($1, $2, $3, $4, $5)`,
 		entry.ActorID, entry.ConfigID, string(entry.Action), string(encoded), entry.At,
 	)
 	return err
+}
+
+type sqlExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 func selectModelConfigSQL(suffix string) string {

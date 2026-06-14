@@ -11,18 +11,24 @@ import (
 )
 
 type Service struct {
-	store Store
-	auth  Authorizer
-	probe Prober
-	now   func() time.Time
+	store  Store
+	auth   Authorizer
+	probe  Prober
+	syncer ModelConfigSyncer
+	now    func() time.Time
 }
 
 func NewService(store Store, auth Authorizer, prober Prober) *Service {
+	return NewServiceWithSyncer(store, auth, prober, nil)
+}
+
+func NewServiceWithSyncer(store Store, auth Authorizer, prober Prober, syncer ModelConfigSyncer) *Service {
 	return &Service{
-		store: store,
-		auth:  auth,
-		probe: prober,
-		now:   time.Now,
+		store:  store,
+		auth:   auth,
+		probe:  prober,
+		syncer: syncer,
+		now:    time.Now,
 	}
 }
 
@@ -42,13 +48,10 @@ func (s *Service) Create(ctx context.Context, principal Principal, req CreateReq
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return PublicModelConfig{}, err
-	}
-	if err := s.audit(ctx, principal, cfg.ID, AuditActionCreate, map[string]string{
+	if err := s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, cfg.ID, AuditActionCreate, map[string]string{
 		"provider": string(cfg.Provider),
 		"network":  string(cfg.Network),
-	}); err != nil {
+	})); err != nil {
 		return PublicModelConfig{}, err
 	}
 	return publicConfig(cfg), nil
@@ -70,15 +73,7 @@ func (s *Service) List(ctx context.Context, principal Principal) ([]PublicModelC
 	return out, nil
 }
 
-func (s *Service) Update(ctx context.Context, principal Principal, id string, req UpdateRequest) (PublicModelConfig, error) {
-	result, err := s.UpdateWithNotice(ctx, principal, id, req)
-	if err != nil {
-		return PublicModelConfig{}, err
-	}
-	return result.Config, nil
-}
-
-func (s *Service) UpdateWithNotice(ctx context.Context, principal Principal, id string, req UpdateRequest) (UpdateResult, error) {
+func (s *Service) Update(ctx context.Context, principal Principal, id string, req UpdateRequest) (UpdateResult, error) {
 	if err := s.authorize(ctx, principal); err != nil {
 		return UpdateResult{}, err
 	}
@@ -106,12 +101,12 @@ func (s *Service) UpdateWithNotice(ctx context.Context, principal Principal, id 
 		if err := s.probeForCurrent(ctx, &cfg); err != nil {
 			return UpdateResult{}, err
 		}
+		if err := s.syncModelConfig(ctx, cfg); err != nil {
+			return UpdateResult{}, err
+		}
 	}
 	cfg.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return UpdateResult{}, err
-	}
-	if err := s.audit(ctx, principal, id, AuditActionUpdate, map[string]string{"current": boolString(cfg.IsCurrent)}); err != nil {
+	if err := s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionUpdate, map[string]string{"current": boolString(cfg.IsCurrent)})); err != nil {
 		return UpdateResult{}, err
 	}
 	result := UpdateResult{Config: publicConfig(cfg)}
@@ -120,6 +115,10 @@ func (s *Service) UpdateWithNotice(ctx context.Context, principal Principal, id 
 		result.Switch = &switchResult
 	}
 	return result, nil
+}
+
+func (s *Service) UpdateWithNotice(ctx context.Context, principal Principal, id string, req UpdateRequest) (UpdateResult, error) {
+	return s.Update(ctx, principal, id, req)
 }
 
 func (s *Service) Enable(ctx context.Context, principal Principal, id string) error {
@@ -132,10 +131,7 @@ func (s *Service) Enable(ctx context.Context, principal Principal, id string) er
 	}
 	cfg.Enabled = true
 	cfg.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return err
-	}
-	return s.audit(ctx, principal, id, AuditActionEnable, nil)
+	return s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionEnable, nil))
 }
 
 func (s *Service) Disable(ctx context.Context, principal Principal, id string) error {
@@ -151,10 +147,7 @@ func (s *Service) Disable(ctx context.Context, principal Principal, id string) e
 	}
 	cfg.Enabled = false
 	cfg.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return err
-	}
-	return s.audit(ctx, principal, id, AuditActionDisable, nil)
+	return s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionDisable, nil))
 }
 
 func (s *Service) SwitchCurrent(ctx context.Context, principal Principal, id string) error {
@@ -176,14 +169,11 @@ func (s *Service) SwitchCurrentWithNotice(ctx context.Context, principal Princip
 	if err := s.probeForCurrent(ctx, &cfg); err != nil {
 		return SwitchResult{}, err
 	}
+	if err := s.syncModelConfig(ctx, cfg); err != nil {
+		return SwitchResult{}, err
+	}
 	cfg.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return SwitchResult{}, err
-	}
-	if err := s.store.SetCurrent(ctx, id); err != nil {
-		return SwitchResult{}, err
-	}
-	if err := s.audit(ctx, principal, id, AuditActionSwitch, map[string]string{"effect": "new_requests"}); err != nil {
+	if err := s.store.SaveAndSetCurrentWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionSwitch, map[string]string{"effect": "new_requests"})); err != nil {
 		return SwitchResult{}, err
 	}
 	return newSwitchResult(id), nil
@@ -203,14 +193,11 @@ func (s *Service) Probe(ctx context.Context, principal Principal, id string) (Pr
 	result := s.probe.Probe(ctx, cfg)
 	cfg.ProbePassed = result.Available
 	cfg.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, cfg); err != nil {
-		return ProbeResult{}, err
-	}
 	details := map[string]string{"available": boolString(result.Available)}
 	if result.ErrorReason != "" {
 		details["error_reason"] = string(result.ErrorReason)
 	}
-	if err := s.audit(ctx, principal, id, AuditActionProbe, details); err != nil {
+	if err := s.store.SaveWithAudit(ctx, cfg, s.auditEntry(principal, id, AuditActionProbe, details)); err != nil {
 		return ProbeResult{}, err
 	}
 	return result, nil
@@ -247,14 +234,21 @@ func (s *Service) authorize(ctx context.Context, principal Principal) error {
 	return s.auth.Authorize(ctx, principal, PermissionModelConfig)
 }
 
-func (s *Service) audit(ctx context.Context, principal Principal, configID string, action AuditAction, details map[string]string) error {
-	return s.store.AppendAudit(ctx, AuditEntry{
+func (s *Service) auditEntry(principal Principal, configID string, action AuditAction, details map[string]string) AuditEntry {
+	return AuditEntry{
 		ActorID:  principal.ID,
 		ConfigID: configID,
 		Action:   action,
 		At:       s.now(),
 		Details:  details,
-	})
+	}
+}
+
+func (s *Service) syncModelConfig(ctx context.Context, cfg ModelConfig) error {
+	if s.syncer == nil {
+		return nil
+	}
+	return s.syncer.SyncModelConfig(ctx, cfg)
 }
 
 func publicConfig(cfg ModelConfig) PublicModelConfig {

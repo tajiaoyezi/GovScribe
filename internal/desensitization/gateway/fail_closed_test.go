@@ -214,6 +214,46 @@ func TestDecoratorDoesNotRetryPublicWhenPrivateRuntimeFails(t *testing.T) {
 	}
 }
 
+func TestDecoratorAuditsStreamPrivateRuntimeFailureEvent(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonEndpointUnavailable},
+		},
+	}
+	routes := NewMemoryRouteConfigStore()
+	decorator := NewDecoratorWithRouteResolver(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
+		routes,
+		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
+	)
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	events := collectStreamEvents(stream)
+	if len(events) != 1 || events[0].Type != llm.StreamEventTypeError {
+		t.Fatalf("events = %#v, want one error event", events)
+	}
+	audits := routes.Audits()
+	if len(audits) != 2 {
+		t.Fatalf("audit count = %d, want route_private and blocked events: %#v", len(audits), audits)
+	}
+	if audits[0].DispositionEvent != DispositionEventRoutePrivate ||
+		audits[0].DispositionReason != DispositionReasonNERUnavailablePrivateAvailable {
+		t.Fatalf("first audit = %#v, want route_private due NER unavailable", audits[0])
+	}
+	if audits[1].DispositionEvent != DispositionEventBlocked ||
+		audits[1].DispositionReason != DispositionReasonPrivateRuntimeFailure {
+		t.Fatalf("second audit = %#v, want blocked private runtime failure", audits[1])
+	}
+}
+
 type failingNER struct{}
 
 func (failingNER) Recognize(context.Context, string) ([]Hit, error) {
@@ -243,4 +283,12 @@ func assertLastDisposition(t *testing.T, routes *MemoryRouteConfigStore, event D
 	if last.DispositionEvent != event || last.DispositionReason != reason {
 		t.Fatalf("last audit = %#v, want %s/%s", last, event, reason)
 	}
+}
+
+func collectStreamEvents(stream <-chan llm.StreamEvent) []llm.StreamEvent {
+	var events []llm.StreamEvent
+	for event := range stream {
+		events = append(events, event)
+	}
+	return events
 }

@@ -93,6 +93,9 @@ func (d *Decorator) Stream(ctx context.Context, req llm.ChatRequest) (<-chan llm
 			if event.Type == llm.StreamEventTypeDelta && event.Delta != "" {
 				event.Delta = buffer.Push(event.Delta)
 			}
+			if event.Type == llm.StreamEventTypeError {
+				_ = d.auditStreamPrivateRuntimeFailure(ctx, req, prepared, target, event)
+			}
 			if event.Type == llm.StreamEventTypeDone {
 				if tail := buffer.Flush(); tail != "" {
 					out <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: tail}
@@ -237,6 +240,29 @@ func (d *Decorator) auditPrivateRuntimeFailure(
 		reason = DispositionReasonNoAvailablePrivateConfig
 	}
 	if errors.Is(err, ErrDesensitizationIncomplete) {
+		reason = DispositionReasonDesensitizationIncomplete
+	}
+	return d.auditDisposition(ctx, original, DispositionEventBlocked, reason)
+}
+
+func (d *Decorator) auditStreamPrivateRuntimeFailure(
+	ctx context.Context,
+	original llm.ChatRequest,
+	prepared llm.ChatRequest,
+	target llm.Network,
+	event llm.StreamEvent,
+) error {
+	if event.Err != nil {
+		return d.auditPrivateRuntimeFailure(ctx, original, prepared, target, event.Err)
+	}
+	if target == llm.NetworkPrivate || !prepared.Route.RequirePrivate {
+		return nil
+	}
+	reason := DispositionReasonPrivateRuntimeFailure
+	if event.ErrorReason == llm.ErrorReasonNoAvailablePrivateConfig {
+		reason = DispositionReasonNoAvailablePrivateConfig
+	}
+	if event.ErrorReason == llm.ErrorReasonDesensitizationIncomplete {
 		reason = DispositionReasonDesensitizationIncomplete
 	}
 	return d.auditDisposition(ctx, original, DispositionEventBlocked, reason)

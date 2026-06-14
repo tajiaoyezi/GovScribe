@@ -52,6 +52,38 @@ func TestSelectBackendWrapsProviderBackendWithCurrentConfigRouter(t *testing.T) 
 	}
 }
 
+func TestSelectBackendRoutesPublicRequestsThroughDesensitizationGateway(t *testing.T) {
+	store := config.NewMemoryStore()
+	mustSave(t, store, config.ModelConfig{
+		ID: "cfg-public", Provider: config.ProviderOpenAI, BaseURL: "https://api.example/v1",
+		APIKey: "sk-test", Model: "model", Network: llm.NetworkPublic, Enabled: true, IsCurrent: true,
+	})
+	backend := &gatewayRecordingBackend{
+		response: llm.ChatResponse{Text: "已支付〖AMOUNT_01〗。", FinishReason: llm.FinishReasonStop},
+	}
+	factory := NewBackendFactory(store, map[BackendKind]ProviderBackend{
+		BackendLiteLLM: backend,
+	})
+
+	client, err := factory.Select(Config{Backend: BackendLiteLLM})
+	if err != nil {
+		t.Fatalf("select backend: %v", err)
+	}
+	resp, err := client.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请支付12345.67元。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("complete through selected backend: %v", err)
+	}
+	if backend.lastRequest.Messages[0].Content != "请支付〖AMOUNT_01〗。" {
+		t.Fatalf("outbound content = %q, want sanitized amount", backend.lastRequest.Messages[0].Content)
+	}
+	if resp.Text != "已支付12345.67元。" {
+		t.Fatalf("response text = %q, want restored amount", resp.Text)
+	}
+}
+
 func TestRouterSnapshotsConfigForInFlightStream(t *testing.T) {
 	store := config.NewMemoryStore()
 	mustSave(t, store, config.ModelConfig{
@@ -120,6 +152,23 @@ func (recordingBackend) Stream(_ context.Context, cfg config.ModelConfig, _ llm.
 	ch := make(chan llm.StreamEvent, 2)
 	ch <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: cfg.ID}
 	ch <- llm.StreamEvent{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop}
+	close(ch)
+	return ch, nil
+}
+
+type gatewayRecordingBackend struct {
+	response    llm.ChatResponse
+	lastRequest llm.ChatRequest
+}
+
+func (b *gatewayRecordingBackend) Complete(_ context.Context, _ config.ModelConfig, req llm.ChatRequest) (llm.ChatResponse, error) {
+	b.lastRequest = req
+	return b.response, nil
+}
+
+func (b *gatewayRecordingBackend) Stream(_ context.Context, _ config.ModelConfig, req llm.ChatRequest) (<-chan llm.StreamEvent, error) {
+	b.lastRequest = req
+	ch := make(chan llm.StreamEvent)
 	close(ch)
 	return ch, nil
 }

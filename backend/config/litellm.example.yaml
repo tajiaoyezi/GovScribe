@@ -1,0 +1,10 @@
+# LiteLLM Proxy MVP configuration.
+# Real model entries are managed through LiteLLM's DB-backed runtime APIs.
+model_list: []
+
+general_settings:
+  store_model_in_db: true
+
+litellm_settings:
+  success_callback: []
+  failure_callback: []

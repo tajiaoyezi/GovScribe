@@ -28,7 +28,7 @@ OpenSpec 产物使用简体中文，遵循 `openspec/config.yaml`；产品名、
 
 ## 提交与 Pull Request 规范
 
-近期提交使用简洁的 Conventional Commit 风格，例如 `spec(c08): 在线编辑器提案...`、`chore: ...`、`init: ...`。存在明确范围时，使用 `type(scope): summary`。
+近期提交使用简洁的 Conventional Commit 风格，例如 `spec(c08): 在线编辑器提案...`、`chore: ...`、`init: ...`。存在明确范围时，使用 `type(scope): summary`。所有 commit message 必须使用中文书写；`type`、`scope`、API 名称、协议名、包名等专业标识可保留英文。
 
 远程分支已设为保护分支，禁止直接 push 到受保护分支。每次 commit 之后，必须推送到工作分支并创建 Pull Request；不得把本地 commit 作为最终交付。
 

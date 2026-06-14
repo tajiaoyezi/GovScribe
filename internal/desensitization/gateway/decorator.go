@@ -61,11 +61,20 @@ func (d *Decorator) Stream(ctx context.Context, req llm.ChatRequest) (<-chan llm
 	out := make(chan llm.StreamEvent)
 	go func() {
 		defer close(out)
+		buffer := newPlaceholderTailBuffer(result)
 		for event := range upstream {
 			if event.Type == llm.StreamEventTypeDelta && event.Delta != "" {
-				event.Delta = result.Restore(event.Delta)
+				event.Delta = buffer.Push(event.Delta)
+			}
+			if event.Type == llm.StreamEventTypeDone {
+				if tail := buffer.Flush(); tail != "" {
+					out <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: tail}
+				}
 			}
 			out <- event
+		}
+		if tail := buffer.Flush(); tail != "" {
+			out <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: tail}
 		}
 	}()
 	return out, nil

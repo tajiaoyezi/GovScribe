@@ -211,11 +211,94 @@ func TestDecoratorProcessesUnclassifiedPublicContent(t *testing.T) {
 	}
 }
 
+func TestDecoratorStreamBuffersPlaceholderAcrossChunks(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeDelta, Delta: "由〖PERSON_"},
+			{Type: llm.StreamEventTypeDelta, Delta: "01〗负责。"},
+			{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop},
+		},
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "张三", Type: dictionary.EntryTypePerson},
+	}))
+	decorator := NewDecorator(next, processor, NewMemoryRouteConfigStore())
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	deltas := collectStreamDeltas(t, stream)
+	if got := joinStrings(deltas); got != "由张三负责。" {
+		t.Fatalf("stream output = %q, want restored placeholder across chunks; deltas=%#v", got, deltas)
+	}
+	for _, delta := range deltas {
+		if delta == "由〖PERSON_" || delta == "01〗负责。" {
+			t.Fatalf("stream emitted split placeholder delta: %#v", deltas)
+		}
+	}
+}
+
+func TestDecoratorStreamFlushesBufferedTailAtEnd(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeDelta, Delta: "正文末尾〖PERSON_"},
+		},
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "张三", Type: dictionary.EntryTypePerson},
+	}))
+	decorator := NewDecorator(next, processor, NewMemoryRouteConfigStore())
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if got := joinStrings(collectStreamDeltas(t, stream)); got != "正文末尾〖PERSON_" {
+		t.Fatalf("stream output = %q, want buffered tail flushed at end", got)
+	}
+}
+
+func TestDecoratorStreamDoesNotBufferOverlongPlaceholderTail(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeDelta, Delta: "异常〖PERSON_01_过长内容"},
+			{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop},
+		},
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "张三", Type: dictionary.EntryTypePerson},
+	}))
+	decorator := NewDecorator(next, processor, NewMemoryRouteConfigStore())
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	deltas := collectStreamDeltas(t, stream)
+	if len(deltas) == 0 || deltas[0] != "异常〖PERSON_01_过长内容" {
+		t.Fatalf("overlong placeholder tail should be emitted without buffering, deltas=%#v", deltas)
+	}
+}
+
 type recordingClient struct {
-	network     llm.Network
-	response    llm.ChatResponse
-	err         error
-	lastRequest llm.ChatRequest
+	network      llm.Network
+	response     llm.ChatResponse
+	streamEvents []llm.StreamEvent
+	err          error
+	lastRequest  llm.ChatRequest
 }
 
 func (c *recordingClient) Complete(_ context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
@@ -228,7 +311,10 @@ func (c *recordingClient) Complete(_ context.Context, req llm.ChatRequest) (llm.
 
 func (c *recordingClient) Stream(_ context.Context, req llm.ChatRequest) (<-chan llm.StreamEvent, error) {
 	c.lastRequest = req
-	ch := make(chan llm.StreamEvent)
+	ch := make(chan llm.StreamEvent, len(c.streamEvents))
+	for _, event := range c.streamEvents {
+		ch <- event
+	}
 	close(ch)
 	return ch, c.err
 }
@@ -268,4 +354,23 @@ func (p *countingProcessor) SanitizeMessages(messages []llm.Message) ([]llm.Mess
 		p.calls++
 	}
 	return out, SanitizationResult{Text: joinedMessages(out)}
+}
+
+func collectStreamDeltas(t *testing.T, stream <-chan llm.StreamEvent) []string {
+	t.Helper()
+	var deltas []string
+	for event := range stream {
+		if event.Type == llm.StreamEventTypeDelta {
+			deltas = append(deltas, event.Delta)
+		}
+	}
+	return deltas
+}
+
+func joinStrings(values []string) string {
+	var out string
+	for _, value := range values {
+		out += value
+	}
+	return out
 }

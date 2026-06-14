@@ -211,6 +211,37 @@ func TestDecoratorProcessesUnclassifiedPublicContent(t *testing.T) {
 	}
 }
 
+func TestDecoratorAppliesPublicPolicyModelConfigID(t *testing.T) {
+	next := &recordingClient{
+		network:  llm.NetworkPublic,
+		response: llm.ChatResponse{Text: "请〖ORGANIZATION_01〗反馈。", FinishReason: llm.FinishReasonStop},
+	}
+	routes := NewMemoryRouteConfigStore()
+	if err := routes.SavePolicy(context.Background(), RoutePolicy{
+		Level:         llm.ContentSecurityLevelSensitive,
+		TargetNetwork: llm.NetworkPublic,
+		ModelConfigID: "cfg-sensitive-public",
+	}); err != nil {
+		t.Fatalf("save policy: %v", err)
+	}
+	processor := NewProcessor(NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+	}))
+	decorator := NewDecorator(next, processor, routes)
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局反馈。"}},
+		Route:                llm.Route{ConfigID: "cfg-current-public"},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if next.lastRequest.Route.ConfigID != "cfg-sensitive-public" || next.lastRequest.Route.RequirePrivate {
+		t.Fatalf("route = %#v, want configured public model", next.lastRequest.Route)
+	}
+}
+
 func TestDecoratorStreamBuffersPlaceholderAcrossChunks(t *testing.T) {
 	next := &recordingClient{
 		network: llm.NetworkPublic,

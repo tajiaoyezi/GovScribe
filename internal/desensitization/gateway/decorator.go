@@ -119,6 +119,10 @@ func (d *Decorator) prepareRequest(ctx context.Context, req llm.ChatRequest, tar
 		req.Route.ConfigID = ""
 		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
 	}
+	if policy.ModelConfigID != "" {
+		req.Route.RequirePrivate = false
+		req.Route.ConfigID = policy.ModelConfigID
+	}
 
 	messages, result := d.processor.SanitizeMessages(req.Messages)
 	req.Messages = messages

@@ -175,7 +175,7 @@ func TestAnthropicStreamUnexpectedEOFEmitsError(t *testing.T) {
 	})
 }
 
-func TestAnthropicThinkingRejectsMaxTokensBelowMinimum(t *testing.T) {
+func TestAnthropicThinkingRejectsMaxTokensAtOrBelowMinimum(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -183,17 +183,54 @@ func TestAnthropicThinkingRejectsMaxTokensBelowMinimum(t *testing.T) {
 	}))
 	defer server.Close()
 
-	maxTokens := 512
+	maxTokens := 1024
 	thinking := true
 	_, err := NewClient().Complete(t.Context(), modelConfig(config.ProviderAnthropic, server.URL, "claude-direct"), llm.ChatRequest{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
 		Params:   llm.GenerationParams{MaxTokens: &maxTokens, Thinking: &thinking},
 	})
 	if err == nil {
-		t.Fatal("complete must reject thinking when max_tokens is below Anthropic minimum")
+		t.Fatal("complete must reject thinking when max_tokens is not greater than Anthropic thinking budget")
 	}
 	if called {
 		t.Fatal("invalid thinking request reached upstream server")
+	}
+}
+
+func TestAnthropicThinkingUsesValidDefaultsWhenMaxTokensMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		thinking, ok := body["thinking"].(map[string]any)
+		if !ok {
+			t.Fatalf("thinking = %#v, want object", body["thinking"])
+		}
+		if thinking["budget_tokens"].(float64) >= body["max_tokens"].(float64) {
+			t.Fatalf("thinking budget %v must be less than max_tokens %v", thinking["budget_tokens"], body["max_tokens"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"msg-test",
+			"type":"message",
+			"role":"assistant",
+			"model":"claude-direct",
+			"content":[{"type":"text","text":"ok"}],
+			"stop_reason":"end_turn",
+			"stop_sequence":"",
+			"usage":{"input_tokens":1,"output_tokens":1}
+		}`))
+	}))
+	defer server.Close()
+
+	thinking := true
+	_, err := NewClient().Complete(t.Context(), modelConfig(config.ProviderAnthropic, server.URL, "claude-direct"), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
+		Params:   llm.GenerationParams{Thinking: &thinking},
+	})
+	if err != nil {
+		t.Fatalf("complete with thinking defaults: %v", err)
 	}
 }
 

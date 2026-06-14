@@ -71,12 +71,20 @@ func (s *Service) List(ctx context.Context, principal Principal) ([]PublicModelC
 }
 
 func (s *Service) Update(ctx context.Context, principal Principal, id string, req UpdateRequest) (PublicModelConfig, error) {
-	if err := s.authorize(ctx, principal); err != nil {
+	result, err := s.UpdateWithNotice(ctx, principal, id, req)
+	if err != nil {
 		return PublicModelConfig{}, err
+	}
+	return result.Config, nil
+}
+
+func (s *Service) UpdateWithNotice(ctx context.Context, principal Principal, id string, req UpdateRequest) (UpdateResult, error) {
+	if err := s.authorize(ctx, principal); err != nil {
+		return UpdateResult{}, err
 	}
 	cfg, err := s.store.Get(ctx, id)
 	if err != nil {
-		return PublicModelConfig{}, err
+		return UpdateResult{}, err
 	}
 	changed := false
 	if req.BaseURL != "" {
@@ -96,17 +104,22 @@ func (s *Service) Update(ctx context.Context, principal Principal, id string, re
 	}
 	if cfg.IsCurrent && changed {
 		if err := s.probeForCurrent(ctx, &cfg); err != nil {
-			return PublicModelConfig{}, err
+			return UpdateResult{}, err
 		}
 	}
 	cfg.UpdatedAt = s.now()
 	if err := s.store.Save(ctx, cfg); err != nil {
-		return PublicModelConfig{}, err
+		return UpdateResult{}, err
 	}
 	if err := s.audit(ctx, principal, id, AuditActionUpdate, map[string]string{"current": boolString(cfg.IsCurrent)}); err != nil {
-		return PublicModelConfig{}, err
+		return UpdateResult{}, err
 	}
-	return publicConfig(cfg), nil
+	result := UpdateResult{Config: publicConfig(cfg)}
+	if cfg.IsCurrent && changed {
+		switchResult := newSwitchResult(id)
+		result.Switch = &switchResult
+	}
+	return result, nil
 }
 
 func (s *Service) Enable(ctx context.Context, principal Principal, id string) error {
@@ -173,12 +186,7 @@ func (s *Service) SwitchCurrentWithNotice(ctx context.Context, principal Princip
 	if err := s.audit(ctx, principal, id, AuditActionSwitch, map[string]string{"effect": "new_requests"}); err != nil {
 		return SwitchResult{}, err
 	}
-	return SwitchResult{
-		ConfigID:                       id,
-		AppliesTo:                      SwitchAppliesToNewRequests,
-		LiteLLMPropagationDelaySeconds: 30,
-		Notice:                         "切换仅确认新请求将使用新配置；在途流不受影响，LiteLLM 多 worker 传播可能约 30 秒且缓存可能短暂陈旧。",
-	}, nil
+	return newSwitchResult(id), nil
 }
 
 func (s *Service) Probe(ctx context.Context, principal Principal, id string) (ProbeResult, error) {
@@ -221,6 +229,15 @@ func (s *Service) probeForCurrent(ctx context.Context, cfg *ModelConfig) error {
 	}
 	cfg.ProbePassed = true
 	return nil
+}
+
+func newSwitchResult(id string) SwitchResult {
+	return SwitchResult{
+		ConfigID:                       id,
+		AppliesTo:                      SwitchAppliesToNewRequests,
+		LiteLLMPropagationDelaySeconds: 30,
+		Notice:                         "切换仅确认新请求将使用新配置；在途流不受影响，LiteLLM 多 worker 传播可能约 30 秒且缓存可能短暂陈旧。",
+	}
 }
 
 func (s *Service) authorize(ctx context.Context, principal Principal) error {

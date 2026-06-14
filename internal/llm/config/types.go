@@ -96,6 +96,11 @@ type UpdateRequest struct {
 	Model   string
 }
 
+type UpdateResult struct {
+	Config PublicModelConfig
+	Switch *SwitchResult
+}
+
 type AuditAction string
 
 const (

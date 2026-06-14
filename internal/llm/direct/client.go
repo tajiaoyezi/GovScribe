@@ -16,7 +16,11 @@ import (
 	"github.com/tajiaoyezi/GovScribe/internal/llm/config"
 )
 
-const defaultAnthropicMaxTokens = 1024
+const (
+	defaultAnthropicMaxTokens      = 1024
+	defaultAnthropicThinkingBudget = 1024
+	defaultAnthropicThinkingTokens = 2048
+)
 
 type Client struct{}
 
@@ -202,6 +206,10 @@ func anthropicParams(cfg config.ModelConfig, req llm.ChatRequest) (anthropic.Mes
 	if req.Params.MaxTokens != nil {
 		maxTokens = *req.Params.MaxTokens
 	}
+	thinkingEnabled := req.Params.Thinking != nil && *req.Params.Thinking
+	if thinkingEnabled && req.Params.MaxTokens == nil {
+		maxTokens = defaultAnthropicThinkingTokens
+	}
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(cfg.Model),
 		MaxTokens: int64(maxTokens),
@@ -210,14 +218,14 @@ func anthropicParams(cfg config.ModelConfig, req llm.ChatRequest) (anthropic.Mes
 	if req.Params.Temperature != nil {
 		params.Temperature = anthropic.Float(*req.Params.Temperature)
 	}
-	if req.Params.Thinking != nil && *req.Params.Thinking {
-		if maxTokens < defaultAnthropicMaxTokens {
+	if thinkingEnabled {
+		if maxTokens <= defaultAnthropicThinkingBudget {
 			return anthropic.MessageNewParams{}, &llm.ProviderError{
 				Reason: llm.ErrorReasonUpstream,
-				Err:    fmt.Errorf("anthropic thinking requires max_tokens >= %d", defaultAnthropicMaxTokens),
+				Err:    fmt.Errorf("anthropic thinking requires max_tokens > %d", defaultAnthropicThinkingBudget),
 			}
 		}
-		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(1024)
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(defaultAnthropicThinkingBudget)
 	}
 	return params, nil
 }

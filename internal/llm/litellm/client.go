@@ -16,14 +16,15 @@ import (
 )
 
 type Client struct {
-	httpClient *http.Client
+	proxyBaseURL string
+	httpClient   *http.Client
 }
 
-func NewClient(httpClient *http.Client) *Client {
+func NewClient(proxyBaseURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{httpClient: httpClient}
+	return &Client{proxyBaseURL: proxyBaseURL, httpClient: httpClient}
 }
 
 func (c *Client) Complete(ctx context.Context, cfg config.ModelConfig, req llm.ChatRequest) (llm.ChatResponse, error) {
@@ -31,7 +32,7 @@ func (c *Client) Complete(ctx context.Context, cfg config.ModelConfig, req llm.C
 	if err != nil {
 		return llm.ChatResponse{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL(cfg.BaseURL), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL(c.proxyBaseURL), bytes.NewReader(body))
 	if err != nil {
 		return llm.ChatResponse{}, err
 	}
@@ -48,7 +49,7 @@ func (c *Client) Complete(ctx context.Context, cfg config.ModelConfig, req llm.C
 
 	var decoded chatCompletionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return llm.ChatResponse{}, err
+		return llm.ChatResponse{}, &llm.ProviderError{Reason: llm.ErrorReasonUpstream, Err: err}
 	}
 	if len(decoded.Choices) == 0 {
 		return llm.ChatResponse{}, &llm.ProviderError{Reason: llm.ErrorReasonUpstream}
@@ -65,7 +66,7 @@ func (c *Client) Stream(ctx context.Context, cfg config.ModelConfig, req llm.Cha
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL(cfg.BaseURL), bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL(c.proxyBaseURL), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

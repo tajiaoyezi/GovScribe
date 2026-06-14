@@ -178,6 +178,30 @@ func TestUpdateCurrentConfigRequiresPassingProbeBeforeSaving(t *testing.T) {
 	}
 }
 
+func TestUpdateCurrentConfigReturnsSwitchNotice(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.Save(context.Background(), ModelConfig{
+		ID: "cfg-current", Provider: ProviderOpenAI, BaseURL: "https://old.example/v1",
+		APIKey: "sk-old", Model: "gpt-old", Network: llm.NetworkPublic, Enabled: true, ProbePassed: true, IsCurrent: true,
+	}); err != nil {
+		t.Fatalf("save current config: %v", err)
+	}
+	svc := NewService(store, allowAuthorizer{}, staticProber{result: ProbeResult{Available: true}})
+
+	result, err := svc.UpdateWithNotice(context.Background(), Principal{ID: "admin-1"}, "cfg-current", UpdateRequest{
+		Model: "gpt-new",
+	})
+	if err != nil {
+		t.Fatalf("update current with notice: %v", err)
+	}
+	if result.Switch == nil {
+		t.Fatal("current config update must return switch semantics notice")
+	}
+	if result.Switch.AppliesTo != SwitchAppliesToNewRequests || result.Switch.PromisesImmediateGlobalEffect() {
+		t.Fatalf("switch notice = %#v, want new-request-only non-immediate notice", result.Switch)
+	}
+}
+
 func TestSwitchNoticeDoesNotPromiseImmediateGlobalEffect(t *testing.T) {
 	store := NewMemoryStore()
 	if err := store.Save(context.Background(), ModelConfig{

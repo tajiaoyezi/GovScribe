@@ -44,7 +44,7 @@ func TestCompleteMapsOpenAICompatibleResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(http.DefaultClient)
+	client := NewClient(server.URL, http.DefaultClient)
 	resp, err := client.Complete(t.Context(), modelConfig(server.URL), llm.ChatRequest{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
 	})
@@ -53,6 +53,47 @@ func TestCompleteMapsOpenAICompatibleResponse(t *testing.T) {
 	}
 	if resp.Text != "生成结果" || resp.FinishReason != llm.FinishReasonStop {
 		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestCompleteUsesConfiguredProxyBaseURLNotModelProviderURL(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"proxy result"},"finish_reason":"stop"}]}`))
+	}))
+	defer proxy.Close()
+
+	cfg := modelConfig("https://anthropic.example")
+	cfg.Provider = config.ProviderAnthropic
+	client := NewClient(proxy.URL, http.DefaultClient)
+
+	resp, err := client.Complete(t.Context(), cfg, llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
+	})
+	if err != nil {
+		t.Fatalf("complete through proxy: %v", err)
+	}
+	if resp.Text != "proxy result" {
+		t.Fatalf("response text = %q, want proxy result", resp.Text)
+	}
+}
+
+func TestCompleteInvalidJSONMapsToProviderUpstreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{invalid`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, http.DefaultClient)
+	_, err := client.Complete(t.Context(), modelConfig("https://provider.example"), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
+	})
+	if errorReasonFromError(err) != llm.ErrorReasonUpstream {
+		t.Fatalf("error = %v, want upstream provider error", err)
 	}
 }
 
@@ -65,7 +106,7 @@ func TestStreamIgnoresUnknownFieldsAndEmitsDone(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(http.DefaultClient)
+	client := NewClient(server.URL, http.DefaultClient)
 	events, err := client.Stream(t.Context(), modelConfig(server.URL), llm.ChatRequest{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "流式"}},
 	})
@@ -93,7 +134,7 @@ func TestStreamHTTPErrorEmitsErrorEvent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(http.DefaultClient)
+	client := NewClient(server.URL, http.DefaultClient)
 	events, err := client.Stream(t.Context(), modelConfig(server.URL), llm.ChatRequest{})
 	if err != nil {
 		t.Fatalf("stream must return event channel for upstream error, got error: %v", err)
@@ -111,7 +152,7 @@ func TestStreamUnexpectedEOFEmitsErrorAfterDeliveredDelta(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(http.DefaultClient)
+	client := NewClient(server.URL, http.DefaultClient)
 	events, err := client.Stream(t.Context(), modelConfig(server.URL), llm.ChatRequest{})
 	if err != nil {
 		t.Fatalf("stream: %v", err)

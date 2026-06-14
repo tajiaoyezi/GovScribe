@@ -3,6 +3,7 @@ module github.com/tajiaoyezi/GovScribe
 go 1.24
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/anthropics/anthropic-sdk-go v1.50.1
 	github.com/openai/openai-go/v3 v3.39.0
 )

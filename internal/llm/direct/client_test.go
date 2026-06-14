@@ -118,11 +118,10 @@ func TestOpenAICompatibleStreamMapsDeltaDoneAndErrors(t *testing.T) {
 	})
 }
 
-func TestOpenAICompatibleStreamDoneWithoutFinishReason(t *testing.T) {
+func TestOpenAICompatibleStreamUnexpectedEOFEmitsError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"id\":\"chunk\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-direct\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"完成\"},\"finish_reason\":\"\"}]}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
 
@@ -132,7 +131,7 @@ func TestOpenAICompatibleStreamDoneWithoutFinishReason(t *testing.T) {
 	}
 	assertStreamEvents(t, events, []llm.StreamEvent{
 		{Type: llm.StreamEventTypeDelta, Delta: "完成"},
-		{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop},
+		{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream},
 	})
 }
 
@@ -156,6 +155,46 @@ func TestAnthropicStreamMapsTextDeltaAndMessageStop(t *testing.T) {
 		{Type: llm.StreamEventTypeDelta, Delta: "你"},
 		{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonLength},
 	})
+}
+
+func TestAnthropicStreamUnexpectedEOFEmitsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: content_block_delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"半截\"}}\n\n"))
+	}))
+	defer server.Close()
+
+	events, err := NewClient().Stream(t.Context(), modelConfig(config.ProviderAnthropic, server.URL, "claude-direct"), llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	assertStreamEvents(t, events, []llm.StreamEvent{
+		{Type: llm.StreamEventTypeDelta, Delta: "半截"},
+		{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream},
+	})
+}
+
+func TestAnthropicThinkingRejectsMaxTokensBelowMinimum(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatal("invalid thinking request must be rejected before outbound call")
+	}))
+	defer server.Close()
+
+	maxTokens := 512
+	thinking := true
+	_, err := NewClient().Complete(t.Context(), modelConfig(config.ProviderAnthropic, server.URL, "claude-direct"), llm.ChatRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "写通知"}},
+		Params:   llm.GenerationParams{MaxTokens: &maxTokens, Thinking: &thinking},
+	})
+	if err == nil {
+		t.Fatal("complete must reject thinking when max_tokens is below Anthropic minimum")
+	}
+	if called {
+		t.Fatal("invalid thinking request reached upstream server")
+	}
 }
 
 func TestDirectBackendsKeepLiteLLMShapeEquivalent(t *testing.T) {

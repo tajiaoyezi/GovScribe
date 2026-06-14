@@ -25,15 +25,16 @@ var (
 )
 
 type BackendFactory struct {
-	backends map[BackendKind]llm.Client
+	store    config.Store
+	backends map[BackendKind]ProviderBackend
 }
 
-func NewBackendFactory(backends map[BackendKind]llm.Client) BackendFactory {
-	copied := make(map[BackendKind]llm.Client, len(backends))
+func NewBackendFactory(store config.Store, backends map[BackendKind]ProviderBackend) BackendFactory {
+	copied := make(map[BackendKind]ProviderBackend, len(backends))
 	for kind, backend := range backends {
 		copied[kind] = backend
 	}
-	return BackendFactory{backends: copied}
+	return BackendFactory{store: store, backends: copied}
 }
 
 func (f BackendFactory) Select(cfg Config) (llm.Client, error) {
@@ -44,7 +45,7 @@ func (f BackendFactory) Select(cfg Config) (llm.Client, error) {
 	if !ok || backend == nil {
 		return nil, ErrUnsupportedBackend
 	}
-	return backend, nil
+	return NewRouter(f.store, backend), nil
 }
 
 type ProviderBackend interface {

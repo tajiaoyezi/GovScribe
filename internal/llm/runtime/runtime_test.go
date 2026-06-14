@@ -10,8 +10,8 @@ import (
 )
 
 func TestSelectBackendRejectsMissingOrInvalidKind(t *testing.T) {
-	factory := NewBackendFactory(map[BackendKind]llm.Client{
-		BackendLiteLLM: fakeClient{},
+	factory := NewBackendFactory(config.NewMemoryStore(), map[BackendKind]ProviderBackend{
+		BackendLiteLLM: recordingBackend{},
 	})
 
 	if _, err := factory.Select(Config{}); !errors.Is(err, ErrBackendSelectionRequired) {
@@ -19,6 +19,36 @@ func TestSelectBackendRejectsMissingOrInvalidKind(t *testing.T) {
 	}
 	if _, err := factory.Select(Config{Backend: BackendKind("unknown")}); !errors.Is(err, ErrUnsupportedBackend) {
 		t.Fatalf("invalid backend error = %v, want ErrUnsupportedBackend", err)
+	}
+}
+
+func TestSelectBackendWrapsProviderBackendWithCurrentConfigRouter(t *testing.T) {
+	store := config.NewMemoryStore()
+	mustSave(t, store, config.ModelConfig{
+		ID: "cfg-current", Provider: config.ProviderOpenAI, BaseURL: "https://api.example/v1",
+		APIKey: "sk-test", Model: "model", Network: llm.NetworkPrivate, Enabled: true, IsCurrent: true,
+	})
+	factory := NewBackendFactory(store, map[BackendKind]ProviderBackend{
+		BackendLiteLLM: recordingBackend{},
+	})
+
+	client, err := factory.Select(Config{Backend: BackendLiteLLM})
+	if err != nil {
+		t.Fatalf("select backend: %v", err)
+	}
+	resp, err := client.Complete(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("complete through selected backend: %v", err)
+	}
+	if resp.Text != "cfg-current" {
+		t.Fatalf("response text = %q, want current config id", resp.Text)
+	}
+	network, err := client.CurrentNetwork(context.Background())
+	if err != nil {
+		t.Fatalf("current network: %v", err)
+	}
+	if network != llm.NetworkPrivate {
+		t.Fatalf("network = %q, want private", network)
 	}
 }
 
@@ -78,22 +108,6 @@ func mustSave(t *testing.T, store *config.MemoryStore, cfg config.ModelConfig) {
 	if err := store.Save(context.Background(), cfg); err != nil {
 		t.Fatalf("save config %q: %v", cfg.ID, err)
 	}
-}
-
-type fakeClient struct{}
-
-func (fakeClient) Complete(context.Context, llm.ChatRequest) (llm.ChatResponse, error) {
-	return llm.ChatResponse{}, nil
-}
-
-func (fakeClient) Stream(context.Context, llm.ChatRequest) (<-chan llm.StreamEvent, error) {
-	ch := make(chan llm.StreamEvent)
-	close(ch)
-	return ch, nil
-}
-
-func (fakeClient) CurrentNetwork(context.Context) (llm.Network, error) {
-	return llm.NetworkPublic, nil
 }
 
 type recordingBackend struct{}

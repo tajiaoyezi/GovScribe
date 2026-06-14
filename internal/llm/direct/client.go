@@ -3,6 +3,8 @@ package direct
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -94,7 +96,7 @@ func (c *Client) streamOpenAI(ctx context.Context, cfg config.ModelConfig, req l
 			return
 		}
 		if !done {
-			ch <- llm.StreamEvent{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop}
+			ch <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream, Err: io.ErrUnexpectedEOF}
 		}
 	}()
 	return ch
@@ -135,7 +137,11 @@ func (c *Client) completeAnthropic(ctx context.Context, cfg config.ModelConfig, 
 		anthropicoption.WithAPIKey(cfg.APIKey),
 		anthropicoption.WithBaseURL(cfg.BaseURL),
 	)
-	resp, err := client.Messages.New(ctx, anthropicParams(cfg, req))
+	params, err := anthropicParams(cfg, req)
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
+	resp, err := client.Messages.New(ctx, params)
 	if err != nil {
 		return llm.ChatResponse{}, mapSDKError(err)
 	}
@@ -157,7 +163,12 @@ func (c *Client) streamAnthropic(ctx context.Context, cfg config.ModelConfig, re
 			anthropicoption.WithAPIKey(cfg.APIKey),
 			anthropicoption.WithBaseURL(cfg.BaseURL),
 		)
-		stream := client.Messages.NewStreaming(ctx, anthropicParams(cfg, req))
+		params, err := anthropicParams(cfg, req)
+		if err != nil {
+			ch <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: errorReasonFromError(err), Err: err}
+			return
+		}
+		stream := client.Messages.NewStreaming(ctx, params)
 		defer stream.Close()
 		done := false
 		for stream.Next() {
@@ -177,12 +188,16 @@ func (c *Client) streamAnthropic(ctx context.Context, cfg config.ModelConfig, re
 		}
 		if err := stream.Err(); err != nil {
 			ch <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: errorReasonFromError(mapSDKError(err)), Err: err}
+			return
+		}
+		if !done {
+			ch <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream, Err: io.ErrUnexpectedEOF}
 		}
 	}()
 	return ch
 }
 
-func anthropicParams(cfg config.ModelConfig, req llm.ChatRequest) anthropic.MessageNewParams {
+func anthropicParams(cfg config.ModelConfig, req llm.ChatRequest) (anthropic.MessageNewParams, error) {
 	maxTokens := defaultAnthropicMaxTokens
 	if req.Params.MaxTokens != nil {
 		maxTokens = *req.Params.MaxTokens
@@ -196,9 +211,15 @@ func anthropicParams(cfg config.ModelConfig, req llm.ChatRequest) anthropic.Mess
 		params.Temperature = anthropic.Float(*req.Params.Temperature)
 	}
 	if req.Params.Thinking != nil && *req.Params.Thinking {
+		if maxTokens < defaultAnthropicMaxTokens {
+			return anthropic.MessageNewParams{}, &llm.ProviderError{
+				Reason: llm.ErrorReasonUpstream,
+				Err:    fmt.Errorf("anthropic thinking requires max_tokens >= %d", defaultAnthropicMaxTokens),
+			}
+		}
 		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(1024)
 	}
-	return params
+	return params, nil
 }
 
 func anthropicMessages(messages []llm.Message) ([]anthropic.TextBlockParam, []anthropic.MessageParam) {

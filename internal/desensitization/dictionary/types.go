@@ -27,6 +27,10 @@ type Authorizer interface {
 	Authorize(context.Context, Principal, Permission) error
 }
 
+type EntryReloader interface {
+	ReloadDictionary(context.Context, []Entry) error
+}
+
 type Entry struct {
 	ID        string
 	Text      string

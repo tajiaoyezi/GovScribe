@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/tajiaoyezi/GovScribe/internal/desensitization/dictionary"
@@ -10,12 +11,22 @@ type Automaton interface {
 	FindAll(string) []Hit
 }
 
+type AutomatonBuilder func([]dictionary.Entry) Automaton
+
 type DictionaryRecognizer struct {
 	automaton atomic.Value
+	builder   AutomatonBuilder
 }
 
 func NewDictionaryRecognizer(entries []dictionary.Entry) *DictionaryRecognizer {
-	r := &DictionaryRecognizer{}
+	return NewDictionaryRecognizerWithBuilder(entries, newACAutomaton)
+}
+
+func NewDictionaryRecognizerWithBuilder(entries []dictionary.Entry, builder AutomatonBuilder) *DictionaryRecognizer {
+	if builder == nil {
+		builder = newACAutomaton
+	}
+	r := &DictionaryRecognizer{builder: builder}
 	r.SwapEntries(entries)
 	return r
 }
@@ -29,7 +40,26 @@ func (r *DictionaryRecognizer) Recognize(text string) []Hit {
 }
 
 func (r *DictionaryRecognizer) SwapEntries(entries []dictionary.Entry) {
-	r.automaton.Store(newSimpleAutomaton(entries))
+	builder := r.builder
+	if builder == nil {
+		builder = newACAutomaton
+	}
+	r.automaton.Store(builder(entries))
+}
+
+type DictionaryRecognizerReloader struct {
+	Recognizer *DictionaryRecognizer
+}
+
+func NewDictionaryRecognizerReloader(recognizer *DictionaryRecognizer) DictionaryRecognizerReloader {
+	return DictionaryRecognizerReloader{Recognizer: recognizer}
+}
+
+func (r DictionaryRecognizerReloader) ReloadDictionary(_ context.Context, entries []dictionary.Entry) error {
+	if r.Recognizer != nil {
+		r.Recognizer.SwapEntries(entries)
+	}
+	return nil
 }
 
 type acAutomaton struct {
@@ -47,7 +77,7 @@ type acNode struct {
 	outputs []dictionaryTerm
 }
 
-func newSimpleAutomaton(entries []dictionary.Entry) Automaton {
+func newACAutomaton(entries []dictionary.Entry) Automaton {
 	automaton := &acAutomaton{nodes: []acNode{{next: make(map[byte]int)}}}
 	for _, entry := range entries {
 		if entry.Deleted || entry.Text == "" {

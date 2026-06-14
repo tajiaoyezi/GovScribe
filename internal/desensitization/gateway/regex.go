@@ -14,7 +14,7 @@ type regexPattern struct {
 func NewRegexRecognizer() RegexRecognizer {
 	return RegexRecognizer{patterns: []regexPattern{
 		{entityType: EntityTypeDocumentNumber, re: regexp.MustCompile(`(?:〔|\[)\d{4}(?:〕|\])[^\s，。；;、]{0,24}?号`)},
-		{entityType: EntityTypeAmount, re: regexp.MustCompile(`\d{1,3}(?:,\d{3})*(?:\.\d+)?元|\d+(?:\.\d+)?万元`)},
+		{entityType: EntityTypeAmount, re: regexp.MustCompile(`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?元|\d+(?:\.\d+)?万元`)},
 		{entityType: EntityTypeIdentityNumber, re: regexp.MustCompile(`\d{17}[\dXx]`)},
 		{entityType: EntityTypeUnifiedSocialCreditCode, re: regexp.MustCompile(`[0-9A-Z]{18}`)},
 	}}

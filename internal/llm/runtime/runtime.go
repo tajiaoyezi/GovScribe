@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/tajiaoyezi/GovScribe/internal/desensitization/gateway"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 	"github.com/tajiaoyezi/GovScribe/internal/llm/config"
 )
@@ -25,16 +26,27 @@ var (
 )
 
 type BackendFactory struct {
-	store    config.Store
-	backends map[BackendKind]ProviderBackend
+	store     config.Store
+	backends  map[BackendKind]ProviderBackend
+	processor gateway.TextProcessor
+	routes    gateway.RouteConfigStore
 }
 
 func NewBackendFactory(store config.Store, backends map[BackendKind]ProviderBackend) BackendFactory {
+	return NewBackendFactoryWithDesensitization(store, backends, gateway.NewProcessor(nil), gateway.NewMemoryRouteConfigStore())
+}
+
+func NewBackendFactoryWithDesensitization(
+	store config.Store,
+	backends map[BackendKind]ProviderBackend,
+	processor gateway.TextProcessor,
+	routes gateway.RouteConfigStore,
+) BackendFactory {
 	copied := make(map[BackendKind]ProviderBackend, len(backends))
 	for kind, backend := range backends {
 		copied[kind] = backend
 	}
-	return BackendFactory{store: store, backends: copied}
+	return BackendFactory{store: store, backends: copied, processor: processor, routes: routes}
 }
 
 func (f BackendFactory) Select(cfg Config) (llm.Client, error) {
@@ -45,7 +57,8 @@ func (f BackendFactory) Select(cfg Config) (llm.Client, error) {
 	if !ok || backend == nil {
 		return nil, ErrUnsupportedBackend
 	}
-	return NewRouter(f.store, backend), nil
+	router := NewRouter(f.store, backend)
+	return gateway.NewDecoratorWithRouteResolver(router, f.processor, f.routes, gateway.NewConfigStoreRouteResolver(f.store)), nil
 }
 
 type ProviderBackend interface {

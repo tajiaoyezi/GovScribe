@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,63 @@ type RoutePolicy struct {
 type RouteConfigStore interface {
 	GetPolicy(context.Context, llm.ContentSecurityLevel) (RoutePolicy, error)
 	SavePolicy(context.Context, RoutePolicy) error
+}
+
+type Permission string
+
+const PermissionRoutePolicyManage Permission = "route.policy.manage"
+
+type Principal struct {
+	ID string
+}
+
+type Authorizer interface {
+	Authorize(context.Context, Principal, Permission) error
+}
+
+var ErrUnauthorizedRoutePolicy = errors.New("unauthorized route policy access")
+
+type RoutePolicyService struct {
+	store RouteConfigStore
+	auth  Authorizer
+	now   func() time.Time
+}
+
+func NewRoutePolicyService(store RouteConfigStore, auth Authorizer) *RoutePolicyService {
+	if store == nil {
+		store = NewMemoryRouteConfigStore()
+	}
+	return &RoutePolicyService{store: store, auth: auth, now: time.Now}
+}
+
+func (s *RoutePolicyService) GetPolicy(ctx context.Context, principal Principal, level llm.ContentSecurityLevel) (RoutePolicy, error) {
+	if err := s.authorize(ctx, principal); err != nil {
+		return RoutePolicy{}, err
+	}
+	return s.store.GetPolicy(ctx, level)
+}
+
+func (s *RoutePolicyService) SavePolicy(ctx context.Context, principal Principal, policy RoutePolicy) (RoutePolicy, error) {
+	if err := s.authorize(ctx, principal); err != nil {
+		return RoutePolicy{}, err
+	}
+	policy.UpdatedBy = principal.ID
+	policy.UpdatedAt = s.now()
+	policy = hardenPolicy(policy)
+	if err := s.store.SavePolicy(ctx, policy); err != nil {
+		return RoutePolicy{}, err
+	}
+	return policy, nil
+}
+
+func (s *RoutePolicyService) authorize(ctx context.Context, principal Principal) error {
+	if s.auth == nil {
+		return ErrUnauthorizedRoutePolicy
+	}
+	if err := s.auth.Authorize(ctx, principal, PermissionRoutePolicyManage); err != nil {
+		return ErrUnauthorizedRoutePolicy
+	}
+	return nil
 }
 
 type MemoryRouteConfigStore struct {

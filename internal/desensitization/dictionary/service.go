@@ -10,13 +10,18 @@ import (
 )
 
 type Service struct {
-	store Store
-	auth  Authorizer
-	now   func() time.Time
+	store    Store
+	auth     Authorizer
+	reloader EntryReloader
+	now      func() time.Time
 }
 
 func NewService(store Store, auth Authorizer) *Service {
-	return &Service{store: store, auth: auth, now: time.Now}
+	return NewServiceWithReloader(store, auth, nil)
+}
+
+func NewServiceWithReloader(store Store, auth Authorizer, reloader EntryReloader) *Service {
+	return &Service{store: store, auth: auth, reloader: reloader, now: time.Now}
 }
 
 func (s *Service) CreateEntry(ctx context.Context, principal Principal, req CreateEntryRequest) (Entry, error) {
@@ -28,6 +33,9 @@ func (s *Service) CreateEntry(ctx context.Context, principal Principal, req Crea
 		return Entry{}, err
 	}
 	if err := s.store.Save(ctx, entry); err != nil {
+		return Entry{}, err
+	}
+	if err := s.reloadDictionary(ctx); err != nil {
 		return Entry{}, err
 	}
 	return entry, nil
@@ -47,6 +55,9 @@ func (s *Service) ImportEntries(ctx context.Context, principal Principal, import
 			return nil, err
 		}
 		entries = append(entries, entry)
+	}
+	if err := s.reloadDictionary(ctx); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
@@ -89,6 +100,9 @@ func (s *Service) UpdateEntry(ctx context.Context, principal Principal, id strin
 	if err := s.store.Save(ctx, entry); err != nil {
 		return Entry{}, err
 	}
+	if err := s.reloadDictionary(ctx); err != nil {
+		return Entry{}, err
+	}
 	return entry, nil
 }
 
@@ -102,7 +116,10 @@ func (s *Service) DeleteEntry(ctx context.Context, principal Principal, id strin
 	}
 	entry.Deleted = true
 	entry.UpdatedAt = s.now()
-	return s.store.Save(ctx, entry)
+	if err := s.store.Save(ctx, entry); err != nil {
+		return err
+	}
+	return s.reloadDictionary(ctx)
 }
 
 func (s *Service) newEntry(text string, entryType EntryType) (Entry, error) {
@@ -128,6 +145,17 @@ func (s *Service) authorize(ctx context.Context, principal Principal) error {
 		return ErrUnauthorized
 	}
 	return nil
+}
+
+func (s *Service) reloadDictionary(ctx context.Context) error {
+	if s.reloader == nil {
+		return nil
+	}
+	entries, err := s.store.ListActive(ctx)
+	if err != nil {
+		return err
+	}
+	return s.reloader.ReloadDictionary(ctx, entries)
 }
 
 func validateEntry(text string, entryType EntryType) error {

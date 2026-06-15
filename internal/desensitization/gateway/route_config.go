@@ -24,6 +24,10 @@ type RouteConfigStore interface {
 	SavePolicy(context.Context, RoutePolicy) error
 }
 
+type RoutePolicyAuditStore interface {
+	SavePolicyWithAudit(context.Context, RoutePolicy, string) error
+}
+
 type Permission string
 
 const PermissionRoutePolicyManage Permission = "route.policy.manage"
@@ -65,10 +69,26 @@ func (s *RoutePolicyService) SavePolicy(ctx context.Context, principal Principal
 	policy.UpdatedBy = principal.ID
 	policy.UpdatedAt = s.now()
 	policy = hardenPolicy(policy)
-	if err := s.store.SavePolicy(ctx, policy); err != nil {
-		return RoutePolicy{}, err
+	if txStore, ok := s.store.(RoutePolicyAuditStore); ok {
+		if err := txStore.SavePolicyWithAudit(ctx, policy, principal.ID); err != nil {
+			return RoutePolicy{}, err
+		}
+		return policy, nil
 	}
-	return policy, nil
+	return RoutePolicy{}, ErrDispositionAuditRequired
+}
+
+func routePolicyAuditEntry(actorID string, before, after RoutePolicy) DispositionAuditEntry {
+	return DispositionAuditEntry{
+		ActorID:               actorID,
+		RequestID:             "route-policy:" + routePolicyDBLevel(after.Level),
+		ContentClassification: after.Level,
+		OriginalDiff:          policyDiffJSON(before, after),
+		MatchDetails:          "[]",
+		DispositionEvent:      DispositionEventRouteConfig,
+		DispositionReason:     DispositionReasonAdminPolicyUpdate,
+		At:                    after.UpdatedAt,
+	}
 }
 
 func (s *RoutePolicyService) authorize(ctx context.Context, principal Principal) error {
@@ -113,6 +133,19 @@ func (s *MemoryRouteConfigStore) SavePolicy(_ context.Context, policy RoutePolic
 	return nil
 }
 
+func (s *MemoryRouteConfigStore) SavePolicyWithAudit(_ context.Context, policy RoutePolicy, actorID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policy = hardenPolicy(policy)
+	before, ok := s.policies[normalizeLevel(policy.Level)]
+	if !ok {
+		before = defaultPolicy(policy.Level)
+	}
+	s.policies[policy.Level] = policy
+	s.audits = append(s.audits, normalizeDispositionAuditEntry(routePolicyAuditEntry(actorID, before, policy)))
+	return nil
+}
+
 func (s *MemoryRouteConfigStore) AppendDispositionAudit(_ context.Context, entry DispositionAuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,6 +159,30 @@ func (s *MemoryRouteConfigStore) Audits() []DispositionAuditEntry {
 	out := make([]DispositionAuditEntry, len(s.audits))
 	copy(out, s.audits)
 	return out
+}
+
+func (s *MemoryRouteConfigStore) ListDispositionAudits(_ context.Context, query DispositionAuditQuery) ([]DispositionAuditEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	limit := auditQueryLimit(query.Limit)
+	levels := classificationSet(query.ContentClassifications)
+	out := make([]DispositionAuditEntry, 0, min(len(s.audits), limit))
+	for i := len(s.audits) - 1; i >= 0 && len(out) < limit; i-- {
+		entry := s.audits[i]
+		if query.ActorID != "" && entry.ActorID != query.ActorID {
+			continue
+		}
+		if query.RequestID != "" && entry.RequestID != query.RequestID {
+			continue
+		}
+		if len(levels) > 0 {
+			if _, ok := levels[normalizeLevel(entry.ContentClassification)]; !ok {
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 func defaultRoutePolicies() []RoutePolicy {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
 
 type Mapping struct {
@@ -14,14 +16,17 @@ type Mapping struct {
 }
 
 type SanitizationResult struct {
-	Text     string
-	Mappings []Mapping
+	Text         string
+	Mappings     []Mapping
+	Matches      []MatchDetail
+	MessageDiffs []MessageDiff
 }
 
 type PlaceholderMapper struct {
 	byOriginal  map[string]Mapping
 	countByType map[EntityType]int
 	mappings    []Mapping
+	matches     []MatchDetail
 }
 
 func NewPlaceholderMapper() *PlaceholderMapper {
@@ -34,10 +39,14 @@ func NewPlaceholderMapper() *PlaceholderMapper {
 func ApplyPlaceholders(text string, hits []Hit) SanitizationResult {
 	mapper := NewPlaceholderMapper()
 	sanitized := mapper.Apply(text, hits)
-	return SanitizationResult{Text: sanitized, Mappings: mapper.Mappings()}
+	return SanitizationResult{Text: sanitized, Mappings: mapper.Mappings(), Matches: mapper.Matches()}
 }
 
 func (m *PlaceholderMapper) Apply(text string, hits []Hit) string {
+	return m.ApplyWithMessageContext(text, hits, -1, "")
+}
+
+func (m *PlaceholderMapper) ApplyWithMessageContext(text string, hits []Hit, messageIndex int, role llm.Role) string {
 	if len(hits) == 0 {
 		return text
 	}
@@ -67,6 +76,16 @@ func (m *PlaceholderMapper) Apply(text string, hits []Hit) string {
 			m.mappings = append(m.mappings, mapping)
 		}
 		builder.WriteString(mapping.Placeholder)
+		m.matches = append(m.matches, MatchDetail{
+			Text:         hit.Text,
+			Type:         hit.Type,
+			Source:       hit.Source,
+			Start:        hit.Start,
+			End:          hit.End,
+			Placeholder:  mapping.Placeholder,
+			MessageIndex: messageIndex,
+			Role:         role,
+		})
 		cursor = hit.End
 	}
 	builder.WriteString(text[cursor:])
@@ -76,6 +95,12 @@ func (m *PlaceholderMapper) Apply(text string, hits []Hit) string {
 func (m *PlaceholderMapper) Mappings() []Mapping {
 	out := make([]Mapping, len(m.mappings))
 	copy(out, m.mappings)
+	return out
+}
+
+func (m *PlaceholderMapper) Matches() []MatchDetail {
+	out := make([]MatchDetail, len(m.matches))
+	copy(out, m.matches)
 	return out
 }
 

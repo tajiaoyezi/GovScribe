@@ -6,6 +6,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/anthropics/anthropic-sdk-go v1.50.1
 	github.com/openai/openai-go/v3 v3.39.0
+	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 )
 
 require (

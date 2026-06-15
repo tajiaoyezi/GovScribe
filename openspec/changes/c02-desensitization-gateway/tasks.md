@@ -53,22 +53,22 @@
 
 ## 7. 出公网审计留痕（D-9）
 
-- [ ] 7.1 实现审计写入：每次涉及公网调用或处置决策落审计到 Postgres——脱敏前后 diff、命中项明细（类型 / 来源层 / 位置）、降级 / 阻断 / 转私有处置事件类型与触发原因
-- [ ] 7.2 实现路由 / 降级配置变更可被审计
-- [ ] 7.3 实现脱敏审计表查询 API，审计员只读（消费 c04 `rbac-authorization` 的 `audit.read` 权限点授权，本 change 不自建审计员角色）；账号 / 角色类审计不入本表（归 c04「账号安全审计表」）；审计数据与映射表 / 原文同样不出 Go 进程边界对外暴露，脱敏审计表纳入与原文同等密级 ACL（由 c04 `access-control-composition` 判定）
-- [ ] 7.4 验证：脱敏后正常出公网记录 diff 与命中项；转私有 / 降级 / 阻断处置均记录事件类型与原因，审计员可只读查询（覆盖 desensitization-gateway「脱敏后正常出公网留痕」「处置事件留痕」场景）
+- [x] 7.1 实现审计写入：每次涉及公网调用或处置决策落审计到 Postgres——脱敏前后 diff、命中项明细（类型 / 来源层 / 位置）、降级 / 阻断 / 转私有处置事件类型与触发原因（对应 `TestDecoratorAuditsPublicSanitizationDiffAndMatches` / `TestPostgresRouteConfigStoreAppendsDispositionAudit`）
+- [x] 7.2 实现路由 / 降级配置变更可被审计（对应 `TestRoutePolicyServiceAuditsPolicyChanges`）
+- [x] 7.3 实现脱敏审计表查询 API，审计员只读（消费 c04 `rbac-authorization` 的 `audit.read` 权限点授权，本 change 不自建审计员角色）；账号 / 角色类审计不入本表（归 c04「账号安全审计表」）；审计数据与映射表 / 原文同样不出 Go 进程边界对外暴露，脱敏审计表纳入与原文同等密级 ACL（由 c04 `access-control-composition` 判定）（对应 `TestDispositionAuditQueryServiceRequiresAuditReadAndClassificationACL` / `TestPostgresRouteConfigStoreListsDispositionAudits`）
+- [x] 7.4 验证：脱敏后正常出公网记录 diff 与命中项；转私有 / 降级 / 阻断处置均记录事件类型与原因，审计员可只读查询（覆盖 desensitization-gateway「脱敏后正常出公网留痕」「处置事件留痕」场景；对应 `TestDecoratorAuditsPublicSanitizationDiffAndMatches` / `TestDecoratorDegradesWithRegexAndDictionaryWhenNERUnavailableAndAllowed` / `TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists` / `TestDecoratorBlocksWhenNERUnavailableNoPrivateAndNoDegrade` / `TestDispositionAuditQueryServiceRequiresAuditReadAndClassificationACL`）
 
 ## 8. 端到端与边界验证
 
-- [ ] 8.1 端到端验证三层识别合并：文本同时含文号、字典单位名、字典未收录人名时，正则 / 字典 / NER 各自命中并合并进占位替换（覆盖 desensitization-gateway「三层各自命中并合并」场景）
-- [ ] 8.2 验证脱敏与精确召回复用同一词条来源：单位名既被脱敏识别又作 c03 精确召回字段时引用脱敏库同一词条（覆盖 desensitization-dictionary「脱敏与精确召回复用同一词条」场景）
-- [ ] 8.3 验证下游一致性：下游（OnlyOffice 在线编辑、c03 入库）拿到的是已回填原文，原文从不以脱敏态进入权威源
-- [ ] 8.4 验证回退策略：生产环境安全回退为关闭对应密级降级开关（回到阻断 fail-closed）而非摘除网关；NER 故障回退由熔断 + 状态机运行时自动处理
+- [x] 8.1 端到端验证三层识别合并：文本同时含文号、字典单位名、字典未收录人名时，正则 / 字典 / NER 各自命中并合并进占位替换（覆盖 desensitization-gateway「三层各自命中并合并」场景；对应 `TestDecoratorEndToEndMergesRegexDictionaryAndNERHits`）
+- [ ] 8.2 验证脱敏与精确召回复用同一词条来源：单位名既被脱敏识别又作 c03 精确召回字段时引用脱敏库同一词条（覆盖 desensitization-dictionary「脱敏与精确召回复用同一词条」场景；当前仅有网关侧共享词条契约 smoke，仍需 c03 消费同一抽取接口后验收）
+- [ ] 8.3 验证下游一致性：下游（OnlyOffice 在线编辑、c03 入库）拿到的是已回填原文，原文从不以脱敏态进入权威源（当前仅有网关响应回填 smoke，仍需 c08 / c03 真实下游 sink 验收）
+- [x] 8.4 验证回退策略：生产环境安全回退为关闭对应密级降级开关（回到阻断 fail-closed）而非摘除网关；NER 故障回退由熔断 + 状态机运行时自动处理（对应 `TestClosingDegradedSwitchSafelyRollsBackToFailClosed` / `TestNERCircuitBreakerOpensAfterConsecutiveFailuresAndHalfOpenCloses`）
 
 ## 9. 信创 / 私有化高风险待 PoC
 
 - [ ] 9.1 [PoC] 外置中文 NER 选型公文域召回实测：HanLP v2.1.x / PaddleNLP PP-UIE / GLiNER 用真实公文样本对比人名 / 地名 / 机构召回（锚定 ADR-0001 D7），选型不改变本 change 的状态机与接口边界
-- [ ] 9.2 [PoC] Aho-Corasick 库选型与锁版本：`petar-dambovaliev/aho-corasick`（无 v1 tag，锁 commit）对比 `cloudflare/ahocorasick`，确认中文多字节 offset 切割正确性（锚定 ADR-0001 D7）
+- [x] 9.2 [PoC] Aho-Corasick 库选型与锁版本：`petar-dambovaliev/aho-corasick`（无 v1 tag，已锁 `v0.0.0-20250424160509-463d218d4745`）对比 `cloudflare/ahocorasick`，确认中文多字节 offset 切割正确性（锚定 ADR-0001 D7；PoC 记录见 `openspec/changes/c02-desensitization-gateway/poc/aho-corasick-selection.md`；对应 `TestDictionaryRecognizerUsesLockedPetarAhoCorasickWithChineseByteOffsets`）
 - [ ] 9.3 [PoC] 占位符边界符碰撞率回归：`〖…〗` 初定字符集用真实公文样本回归确认与正文 / 模型输出的碰撞率，必要时调整；一并验证多字节 offset 切割正确（若 NER offset 链路涉及 `sugarme/tokenizer`，验证其 #82 多字节 offset bug 不影响切割，锚定 ADR-0001 D7）
 - [ ] 9.4 [PoC] 熔断 / NER 超时阈值默认值定档：依公文域真实调用量与私有部署负载在实施期定档（先给保守默认，上线后据审计与监控数据调参，锚定 ADR-0001 D-6）
 - [ ] 9.5 [PoC] 龙芯 LoongArch64 上外置 NER Python 微服务与 Go 网关进程的运行验证（龙芯非 ARM64，需单独确认推理依赖与镜像可用性）

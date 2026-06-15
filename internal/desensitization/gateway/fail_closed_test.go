@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -15,7 +16,9 @@ func TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists(t *testing.T) {
 	routes := NewMemoryRouteConfigStore()
 	decorator := NewDecoratorWithRouteResolver(
 		next,
-		NewProcessorWithNER(NewDictionaryRecognizer(nil), failingNER{}),
+		NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+			{Text: "张三", Type: dictionary.EntryTypePerson},
+		}), failingNER{}),
 		routes,
 		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
 	)
@@ -34,6 +37,7 @@ func TestDecoratorTurnsPrivateWhenNERUnavailableAndPrivateExists(t *testing.T) {
 		t.Fatalf("private fallback should not send sanitized public content, got %q", next.lastRequest.Messages[0].Content)
 	}
 	assertLastDisposition(t, routes, DispositionEventRoutePrivate, DispositionReasonNERUnavailablePrivateAvailable)
+	assertLastDispositionPayloadContains(t, routes, "张三", EntityTypePerson, SourceDictionary)
 }
 
 func TestDecoratorDegradesWithRegexAndDictionaryWhenNERUnavailableAndAllowed(t *testing.T) {
@@ -155,6 +159,30 @@ func TestDecoratorBlocksWhenNERUnavailableNoPrivateAndNoDegrade(t *testing.T) {
 	assertLastDisposition(t, routes, DispositionEventBlocked, DispositionReasonNERUnavailableNoPrivateNoDegrade)
 }
 
+func TestDecoratorAuditsBlockedNERUnavailableWithRegexDictionaryPayload(t *testing.T) {
+	next := &recordingClient{network: llm.NetworkPublic}
+	routes := NewMemoryRouteConfigStore()
+	decorator := NewDecoratorWithRouteResolver(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+			{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+		}), failingNER{}),
+		routes,
+		staticPrivateResolver{},
+	)
+
+	_, err := decorator.Complete(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "请市财政局支付1234元。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if !errors.Is(err, ErrDesensitizationIncomplete) {
+		t.Fatalf("error = %v, want ErrDesensitizationIncomplete", err)
+	}
+	assertLastDisposition(t, routes, DispositionEventBlocked, DispositionReasonNERUnavailableNoPrivateNoDegrade)
+	assertLastDispositionPayloadContains(t, routes, "市财政局", EntityTypeOrganization, SourceDictionary)
+	assertLastDispositionPayloadContains(t, routes, "1234元", EntityTypeAmount, SourceRegex)
+}
+
 func TestDecoratorNeverDegradesClassifiedWhenNERUnavailable(t *testing.T) {
 	routes := NewMemoryRouteConfigStore()
 	if err := routes.SavePolicy(context.Background(), RoutePolicy{
@@ -254,6 +282,70 @@ func TestDecoratorAuditsStreamPrivateRuntimeFailureEvent(t *testing.T) {
 	}
 }
 
+func TestDecoratorAuditsStreamErrorReasonWithRegexDictionaryPayload(t *testing.T) {
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonEndpointUnavailable},
+		},
+	}
+	routes := NewMemoryRouteConfigStore()
+	decorator := NewDecoratorWithRouteResolver(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+			{Text: "张三", Type: dictionary.EntryTypePerson},
+		}), failingNER{}),
+		routes,
+		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
+	)
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	events := collectStreamEvents(stream)
+	if len(events) != 1 || events[0].Type != llm.StreamEventTypeError {
+		t.Fatalf("events = %#v, want one upstream error event", events)
+	}
+	assertLastDisposition(t, routes, DispositionEventBlocked, DispositionReasonPrivateRuntimeFailure)
+	assertLastDispositionPayloadContains(t, routes, "张三", EntityTypePerson, SourceDictionary)
+}
+
+func TestDecoratorStreamEmitsErrorWhenPrivateRuntimeFailureAuditFails(t *testing.T) {
+	auditFailure := errors.New("audit unavailable")
+	next := &recordingClient{
+		network: llm.NetworkPublic,
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonEndpointUnavailable},
+		},
+	}
+	routes := NewMemoryRouteConfigStore()
+	decorator := NewDecoratorWithRouteResolverAndAudit(
+		next,
+		NewProcessorWithNER(NewDictionaryRecognizer([]dictionary.Entry{
+			{Text: "张三", Type: dictionary.EntryTypePerson},
+		}), failingNER{}),
+		routes,
+		staticPrivateResolver{route: llm.Route{ConfigID: "cfg-private", RequirePrivate: true}, ok: true},
+		&failingDispositionAuditStore{failOn: 2, err: auditFailure},
+	)
+
+	stream, err := decorator.Stream(context.Background(), llm.ChatRequest{
+		Messages:             []llm.Message{{Role: llm.RoleUser, Content: "张三负责。"}},
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	events := collectStreamEvents(stream)
+	if len(events) != 1 || !errors.Is(events[0].Err, auditFailure) {
+		t.Fatalf("events = %#v, want one audit failure event", events)
+	}
+}
+
 type failingNER struct{}
 
 func (failingNER) Recognize(context.Context, string) ([]Hit, error) {
@@ -285,10 +377,52 @@ func assertLastDisposition(t *testing.T, routes *MemoryRouteConfigStore, event D
 	}
 }
 
+func assertLastDispositionPayloadContains(t *testing.T, routes *MemoryRouteConfigStore, text string, entityType EntityType, source Source) {
+	t.Helper()
+	audits := routes.Audits()
+	if len(audits) == 0 {
+		t.Fatalf("no disposition audit recorded, want payload containing %q", text)
+	}
+	last := audits[len(audits)-1]
+	var diff struct {
+		Changed bool `json:"changed"`
+	}
+	if err := json.Unmarshal([]byte(last.OriginalDiff), &diff); err != nil {
+		t.Fatalf("decode diff %q: %v", last.OriginalDiff, err)
+	}
+	if !diff.Changed {
+		t.Fatalf("last audit diff = %q, want changed diff", last.OriginalDiff)
+	}
+	var matches []MatchDetail
+	if err := json.Unmarshal([]byte(last.MatchDetails), &matches); err != nil {
+		t.Fatalf("decode matches %q: %v", last.MatchDetails, err)
+	}
+	for _, match := range matches {
+		if match.Text == text && match.Type == entityType && match.Source == source {
+			return
+		}
+	}
+	t.Fatalf("last audit matches = %#v, missing %q/%s/%s", matches, text, entityType, source)
+}
+
 func collectStreamEvents(stream <-chan llm.StreamEvent) []llm.StreamEvent {
 	var events []llm.StreamEvent
 	for event := range stream {
 		events = append(events, event)
 	}
 	return events
+}
+
+type failingDispositionAuditStore struct {
+	calls  int
+	failOn int
+	err    error
+}
+
+func (s *failingDispositionAuditStore) AppendDispositionAudit(context.Context, DispositionAuditEntry) error {
+	s.calls++
+	if s.calls == s.failOn {
+		return s.err
+	}
+	return nil
 }

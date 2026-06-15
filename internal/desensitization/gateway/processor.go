@@ -36,23 +36,41 @@ func (p Processor) Sanitize(text string) SanitizationResult {
 func (p Processor) SanitizeMessages(messages []llm.Message) ([]llm.Message, SanitizationResult) {
 	out := append([]llm.Message(nil), messages...)
 	mapper := NewPlaceholderMapper()
+	diffs := make([]MessageDiff, 0, len(out))
 	for i := range out {
-		out[i].Content = mapper.Apply(out[i].Content, p.recognize(out[i].Content))
+		before := out[i].Content
+		out[i].Content = mapper.ApplyWithMessageContext(out[i].Content, p.recognize(out[i].Content), i, out[i].Role)
+		diffs = append(diffs, MessageDiff{
+			MessageIndex: i,
+			Role:         out[i].Role,
+			Before:       before,
+			After:        out[i].Content,
+			Changed:      before != out[i].Content,
+		})
 	}
-	return out, SanitizationResult{Text: joinedMessages(out), Mappings: mapper.Mappings()}
+	return out, SanitizationResult{Text: joinedMessages(out), Mappings: mapper.Mappings(), Matches: mapper.Matches(), MessageDiffs: diffs}
 }
 
 func (p Processor) SanitizeMessagesContext(ctx context.Context, messages []llm.Message) ([]llm.Message, SanitizationResult, error) {
 	out := append([]llm.Message(nil), messages...)
 	mapper := NewPlaceholderMapper()
+	diffs := make([]MessageDiff, 0, len(out))
 	for i := range out {
+		before := out[i].Content
 		hits, err := p.recognizeWithNER(ctx, out[i].Content)
 		if err != nil {
 			return nil, SanitizationResult{}, err
 		}
-		out[i].Content = mapper.Apply(out[i].Content, hits)
+		out[i].Content = mapper.ApplyWithMessageContext(out[i].Content, hits, i, out[i].Role)
+		diffs = append(diffs, MessageDiff{
+			MessageIndex: i,
+			Role:         out[i].Role,
+			Before:       before,
+			After:        out[i].Content,
+			Changed:      before != out[i].Content,
+		})
 	}
-	return out, SanitizationResult{Text: joinedMessages(out), Mappings: mapper.Mappings()}, nil
+	return out, SanitizationResult{Text: joinedMessages(out), Mappings: mapper.Mappings(), Matches: mapper.Matches(), MessageDiffs: diffs}, nil
 }
 
 func (p Processor) recognize(text string) []Hit {

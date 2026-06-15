@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	ahocorasick "github.com/petar-dambovaliev/aho-corasick"
 	"github.com/tajiaoyezi/GovScribe/internal/desensitization/dictionary"
 )
 
@@ -62,104 +63,63 @@ func (r DictionaryRecognizerReloader) ReloadDictionary(_ context.Context, entrie
 	return nil
 }
 
-type acAutomaton struct {
-	nodes []acNode
-}
-
 type dictionaryTerm struct {
 	text       string
 	entityType EntityType
 }
 
-type acNode struct {
-	next    map[byte]int
-	fail    int
-	outputs []dictionaryTerm
+type petarAutomaton struct {
+	matcher ahocorasick.AhoCorasick
+	terms   []dictionaryTerm
 }
 
 func newACAutomaton(entries []dictionary.Entry) Automaton {
-	automaton := &acAutomaton{nodes: []acNode{{next: make(map[byte]int)}}}
+	terms := make([]dictionaryTerm, 0, len(entries))
 	for _, entry := range entries {
 		if entry.Deleted || entry.Text == "" {
 			continue
 		}
-		automaton.add(dictionaryTerm{
+		terms = append(terms, dictionaryTerm{
 			text:       entry.Text,
 			entityType: entityTypeFromDictionary(entry.Type),
 		})
 	}
-	automaton.buildFailures()
-	return automaton
+	if len(terms) == 0 {
+		return &petarAutomaton{}
+	}
+	patterns := make([]string, len(terms))
+	for i, term := range terms {
+		patterns[i] = term.text
+	}
+	builder := ahocorasick.NewAhoCorasickBuilder(ahocorasick.Opts{
+		MatchKind: ahocorasick.StandardMatch,
+	})
+	return &petarAutomaton{matcher: builder.Build(patterns), terms: terms}
 }
 
-func (a *acAutomaton) add(term dictionaryTerm) {
-	state := 0
-	for _, b := range []byte(term.text) {
-		next, ok := a.nodes[state].next[b]
-		if !ok {
-			next = len(a.nodes)
-			a.nodes = append(a.nodes, acNode{next: make(map[byte]int)})
-			a.nodes[state].next[b] = next
-		}
-		state = next
+func (a *petarAutomaton) FindAll(text string) []Hit {
+	if len(a.terms) == 0 {
+		return nil
 	}
-	a.nodes[state].outputs = append(a.nodes[state].outputs, term)
-}
-
-func (a *acAutomaton) buildFailures() {
-	queue := make([]int, 0)
-	for _, child := range a.nodes[0].next {
-		a.nodes[child].fail = 0
-		queue = append(queue, child)
-	}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for b, child := range a.nodes[current].next {
-			fail := a.nodes[current].fail
-			for fail != 0 {
-				if next, ok := a.nodes[fail].next[b]; ok {
-					fail = next
-					break
-				}
-				fail = a.nodes[fail].fail
-			}
-			if fail == 0 {
-				if next, ok := a.nodes[0].next[b]; ok && next != child {
-					fail = next
-				}
-			}
-			a.nodes[child].fail = fail
-			a.nodes[child].outputs = append(a.nodes[child].outputs, a.nodes[fail].outputs...)
-			queue = append(queue, child)
-		}
-	}
-}
-
-func (a *acAutomaton) FindAll(text string) []Hit {
 	var hits []Hit
-	state := 0
-	for i, b := range []byte(text) {
-		for state != 0 {
-			if _, ok := a.nodes[state].next[b]; ok {
-				break
-			}
-			state = a.nodes[state].fail
+	iter := a.matcher.IterOverlapping(text)
+	for match := iter.Next(); match != nil; match = iter.Next() {
+		pattern := match.Pattern()
+		if pattern < 0 || pattern >= len(a.terms) {
+			continue
 		}
-		if next, ok := a.nodes[state].next[b]; ok {
-			state = next
+		start, end := match.Start(), match.End()
+		if start < 0 || end > len(text) || start >= end {
+			continue
 		}
-		for _, term := range a.nodes[state].outputs {
-			end := i + 1
-			start := end - len(term.text)
-			hits = append(hits, Hit{
-				Start:  start,
-				End:    end,
-				Text:   text[start:end],
-				Type:   term.entityType,
-				Source: SourceDictionary,
-			})
-		}
+		term := a.terms[pattern]
+		hits = append(hits, Hit{
+			Start:  start,
+			End:    end,
+			Text:   text[start:end],
+			Type:   term.entityType,
+			Source: SourceDictionary,
+		})
 	}
 	return hits
 }

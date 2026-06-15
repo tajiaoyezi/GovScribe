@@ -37,6 +37,23 @@ func TestDictionaryRecognizerUsesTypedEntries(t *testing.T) {
 	assertHasHit(t, hits, EntityTypeSecretKeywordBlacklist, SourceDictionary, "绝密项目")
 }
 
+func TestDictionaryRecognizerUsesLockedPetarAhoCorasickWithChineseByteOffsets(t *testing.T) {
+	recognizer := NewDictionaryRecognizer([]dictionary.Entry{
+		{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
+		{Text: "张三", Type: dictionary.EntryTypePerson},
+	})
+	if _, ok := recognizer.automaton.Load().(*petarAutomaton); !ok {
+		t.Fatalf("default dictionary recognizer should use locked petar Aho-Corasick backend")
+	}
+
+	text := "请市财政局与张三共同反馈，市财政局负责汇总。"
+	hits := recognizer.Recognize(text)
+
+	assertHasHitAt(t, hits, EntityTypeOrganization, SourceDictionary, "市财政局", len("请"), len("请市财政局"))
+	assertHasHitAt(t, hits, EntityTypePerson, SourceDictionary, "张三", len("请市财政局与"), len("请市财政局与张三"))
+	assertHasHitAt(t, hits, EntityTypeOrganization, SourceDictionary, "市财政局", len("请市财政局与张三共同反馈，"), len("请市财政局与张三共同反馈，市财政局"))
+}
+
 func TestDictionaryRecognizerSwapEntriesAffectsSubsequentRequests(t *testing.T) {
 	recognizer := NewDictionaryRecognizer([]dictionary.Entry{
 		{Text: "市财政局", Type: dictionary.EntryTypeOrganization},
@@ -153,4 +170,14 @@ func assertHasHit(t *testing.T, hits []Hit, entityType EntityType, source Source
 		}
 	}
 	t.Fatalf("missing hit type=%q source=%q text=%q in %#v", entityType, source, text, hits)
+}
+
+func assertHasHitAt(t *testing.T, hits []Hit, entityType EntityType, source Source, text string, start, end int) {
+	t.Helper()
+	for _, hit := range hits {
+		if hit.Type == entityType && hit.Source == source && hit.Text == text && hit.Start == start && hit.End == end {
+			return
+		}
+	}
+	t.Fatalf("missing hit type=%q source=%q text=%q span=%d-%d in %#v", entityType, source, text, start, end, hits)
 }

@@ -67,6 +67,7 @@ func TestNERCircuitBreakerAllowsOnlyOneHalfOpenProbe(t *testing.T) {
 	if _, err := breaker.Recognize(context.Background(), "张三"); !errors.Is(err, ErrNERUnavailable) {
 		t.Fatalf("initial failure error = %v, want ErrNERUnavailable", err)
 	}
+	<-ner.started
 
 	now = now.Add(time.Minute)
 	var wg sync.WaitGroup

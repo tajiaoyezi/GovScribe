@@ -94,7 +94,10 @@ func (d *Decorator) Stream(ctx context.Context, req llm.ChatRequest) (<-chan llm
 				event.Delta = buffer.Push(event.Delta)
 			}
 			if event.Type == llm.StreamEventTypeError {
-				_ = d.auditStreamPrivateRuntimeFailure(ctx, req, prepared, target, event)
+				if err := d.auditStreamPrivateRuntimeFailure(ctx, req, prepared, target, event); err != nil {
+					out <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonDesensitizationIncomplete, Err: err}
+					return
+				}
 			}
 			if event.Type == llm.StreamEventTypeDone {
 				if tail := buffer.Flush(); tail != "" {
@@ -167,6 +170,9 @@ func (d *Decorator) prepareRequest(ctx context.Context, req llm.ChatRequest, tar
 	if err != nil {
 		return llm.ChatRequest{}, SanitizationResult{}, err
 	}
+	if err := d.auditPublicSanitization(ctx, req, result); err != nil {
+		return llm.ChatRequest{}, SanitizationResult{}, err
+	}
 	req.Messages = messages
 	return req, result, nil
 }
@@ -180,12 +186,13 @@ func (d *Decorator) sanitizeMessages(ctx context.Context, messages []llm.Message
 }
 
 func (d *Decorator) prepareNERUnavailable(ctx context.Context, req llm.ChatRequest, policy RoutePolicy) (llm.ChatRequest, SanitizationResult, error) {
+	auditResult := d.fallbackAuditResult(req)
 	if route, ok, err := d.privateRoute(ctx); err != nil {
 		return llm.ChatRequest{}, SanitizationResult{}, err
 	} else if ok {
 		req.Route = route
 		req.Route.RequirePrivate = true
-		if err := d.auditDisposition(ctx, req, DispositionEventRoutePrivate, DispositionReasonNERUnavailablePrivateAvailable); err != nil {
+		if err := d.auditDispositionWithResult(ctx, req, DispositionEventRoutePrivate, DispositionReasonNERUnavailablePrivateAvailable, auditResult); err != nil {
 			return llm.ChatRequest{}, SanitizationResult{}, err
 		}
 		return req, SanitizationResult{Text: joinedMessages(req.Messages)}, nil
@@ -196,20 +203,29 @@ func (d *Decorator) prepareNERUnavailable(ctx context.Context, req llm.ChatReque
 			req.Route.ConfigID = policy.ModelConfigID
 		}
 		req.Route.RequirePrivate = false
+		original := req
 		messages, result := d.processor.SanitizeMessages(req.Messages)
 		req.Messages = messages
-		if err := d.auditDisposition(ctx, req, DispositionEventDegradedPublic, DispositionReasonNERUnavailableDegradedPublic); err != nil {
+		if err := d.auditDispositionWithResult(ctx, original, DispositionEventDegradedPublic, DispositionReasonNERUnavailableDegradedPublic, result); err != nil {
 			return llm.ChatRequest{}, SanitizationResult{}, err
 		}
 		return req, result, nil
 	}
-	if err := d.auditDisposition(ctx, req, DispositionEventBlocked, DispositionReasonNERUnavailableNoPrivateNoDegrade); err != nil {
+	if err := d.auditDispositionWithResult(ctx, req, DispositionEventBlocked, DispositionReasonNERUnavailableNoPrivateNoDegrade, auditResult); err != nil {
 		return llm.ChatRequest{}, SanitizationResult{}, err
 	}
 	return llm.ChatRequest{}, SanitizationResult{}, &llm.ProviderError{
 		Reason: llm.ErrorReasonDesensitizationIncomplete,
 		Err:    ErrDesensitizationIncomplete,
 	}
+}
+
+func (d *Decorator) fallbackAuditResult(req llm.ChatRequest) SanitizationResult {
+	if d.processor == nil {
+		return SanitizationResult{Text: joinedMessages(req.Messages)}
+	}
+	_, result := d.processor.SanitizeMessages(req.Messages)
+	return result
 }
 
 func (d *Decorator) privateRoute(ctx context.Context) (llm.Route, bool, error) {
@@ -242,7 +258,7 @@ func (d *Decorator) auditPrivateRuntimeFailure(
 	if errors.Is(err, ErrDesensitizationIncomplete) {
 		reason = DispositionReasonDesensitizationIncomplete
 	}
-	return d.auditDisposition(ctx, original, DispositionEventBlocked, reason)
+	return d.auditDispositionWithResult(ctx, original, DispositionEventBlocked, reason, d.fallbackAuditResult(original))
 }
 
 func (d *Decorator) auditStreamPrivateRuntimeFailure(
@@ -265,17 +281,33 @@ func (d *Decorator) auditStreamPrivateRuntimeFailure(
 	if event.ErrorReason == llm.ErrorReasonDesensitizationIncomplete {
 		reason = DispositionReasonDesensitizationIncomplete
 	}
-	return d.auditDisposition(ctx, original, DispositionEventBlocked, reason)
+	return d.auditDispositionWithResult(ctx, original, DispositionEventBlocked, reason, d.fallbackAuditResult(original))
 }
 
 func (d *Decorator) auditDisposition(ctx context.Context, req llm.ChatRequest, event DispositionEvent, reason DispositionReason) error {
+	return d.auditDispositionWithResult(ctx, req, event, reason, SanitizationResult{})
+}
+
+func (d *Decorator) auditPublicSanitization(ctx context.Context, req llm.ChatRequest, result SanitizationResult) error {
+	return d.auditDispositionWithResult(ctx, req, DispositionEventPublicSanitized, DispositionReasonNormalPublicCall, result)
+}
+
+func (d *Decorator) auditDispositionWithResult(ctx context.Context, req llm.ChatRequest, event DispositionEvent, reason DispositionReason, result SanitizationResult) error {
 	if d.audits == nil {
-		return nil
+		return ErrDispositionAuditRequired
+	}
+	diff := "{}"
+	matches := "[]"
+	if result.Text != "" || len(result.Matches) > 0 {
+		diff = auditDiffWithMessagesJSON(joinedMessages(req.Messages), result.Text, result.MessageDiffs)
+		matches = matchDetailsJSON(result.Matches)
 	}
 	return d.audits.AppendDispositionAudit(ctx, DispositionAuditEntry{
 		ActorID:               req.ActorID,
 		RequestID:             req.RequestID,
 		ContentClassification: normalizeLevel(req.ContentSecurityLevel),
+		OriginalDiff:          diff,
+		MatchDetails:          matches,
 		DispositionEvent:      event,
 		DispositionReason:     reason,
 	})

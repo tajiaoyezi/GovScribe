@@ -298,6 +298,7 @@ function UserAdmin({ token }: { token: string }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [resetTarget, setResetTarget] = useState<ManagedUser | null>(null);
   const [form] = Form.useForm<UserValues>();
 
   const refresh = async () => {
@@ -381,12 +382,7 @@ function UserAdmin({ token }: { token: string }) {
         <Button
           size="small"
           icon={<KeyRound size={14} />}
-          onClick={() => {
-            Modal.confirm({
-              title: `重置 ${record.username} 的密码`,
-              content: <ResetPasswordForm token={token} userId={record.id} onDone={() => void refresh()} />
-            });
-          }}
+          onClick={() => setResetTarget(record)}
         >
           重置
         </Button>
@@ -425,6 +421,23 @@ function UserAdmin({ token }: { token: string }) {
       </Form>
       <Alert className="thinAlert" type="info" showIcon message="停用、分配角色、重置密码均由后端统一判定点校验。" />
       <Table rowKey="id" loading={loading} columns={columns} dataSource={users} pagination={{ pageSize: 8 }} />
+      <Modal
+        title={resetTarget ? `重置 ${resetTarget.username} 的密码` : "重置密码"}
+        open={resetTarget !== null}
+        onCancel={() => setResetTarget(null)}
+        footer={null}
+      >
+        {resetTarget ? (
+          <ResetPasswordForm
+            token={token}
+            userId={resetTarget.id}
+            onDone={() => {
+              setResetTarget(null);
+              void refresh();
+            }}
+          />
+        ) : null}
+      </Modal>
     </section>
   );
 }
@@ -441,7 +454,6 @@ function ResetPasswordForm({ token, userId, onDone }: { token: string; userId: s
           await resetPassword(token, userId, password);
           message.success("密码已重置");
           onDone();
-          Modal.destroyAll();
         } catch {
           message.error("重置失败");
         } finally {

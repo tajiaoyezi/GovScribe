@@ -1,0 +1,181 @@
+:root {
+  color: #1f2328;
+  background: #f6f7f9;
+  font-family:
+    Inter, "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f6f7f9;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.authPage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.authPanel {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid #dde2e8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(31, 35, 40, 0.08);
+}
+
+.authHeader {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.authHeader h2,
+.panel h3 {
+  margin: 0;
+}
+
+.appShell {
+  min-height: 100vh;
+}
+
+.sideNav {
+  background: #202124 !important;
+  color: #f2f4f7;
+  padding: 20px 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 28px;
+}
+
+.roleSummary {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+}
+
+.roleSummary .ant-typography {
+  color: #ffffff;
+}
+
+.roleTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.logoutButton {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.workspace {
+  padding: 28px;
+  overflow: auto;
+}
+
+.tabLabel,
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel {
+  display: grid;
+  gap: 18px;
+  max-width: 1180px;
+}
+
+.panelHeader {
+  justify-content: space-between;
+}
+
+.entryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 12px;
+}
+
+.entryButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2328;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.entryButton:hover {
+  border-color: #208a62;
+  box-shadow: 0 8px 24px rgba(32, 138, 98, 0.12);
+}
+
+.createUserForm {
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #dde2e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.thinAlert {
+  max-width: 760px;
+}
+
+.roleSelect {
+  min-width: 150px;
+}
+
+@media (max-width: 820px) {
+  .appShell {
+    display: block;
+  }
+
+  .sideNav {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .workspace {
+    padding: 18px;
+  }
+
+  .createUserForm {
+    display: grid;
+  }
+}

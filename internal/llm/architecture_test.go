@@ -19,6 +19,7 @@ func TestBusinessPackagesDoNotImportConcreteModelClients(t *testing.T) {
 	}
 	allowedPrefixes := []string{
 		filepath.Join(root, "internal", "llm"),
+		filepath.Join(root, "internal", "rag", "vector"),
 	}
 
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {

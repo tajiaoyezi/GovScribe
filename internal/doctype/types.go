@@ -48,11 +48,9 @@ type MatrixEntry struct {
 
 // TargetCapability 按 design D-06-3 计算分流目标：仅 A 表深做档且非标黄稀缺命中 c05；
 // 其余（标黄稀缺 / B 表各档 / 兜底）一律 c07，全程无「无法处理」死路。
+// 与 Route 共用 routeCapability 单一权威规则，确保分级表层与路由层口径一致。
 func (e MatrixEntry) TargetCapability() TargetCapability {
-	if e.Tier == TierDeep && !e.IsStarredRare {
-		return CapabilityC05
-	}
-	return CapabilityC07
+	return routeCapability(e.Tier, e.IsStarredRare)
 }
 
 // ErrMatrixEntryNotFound 表示分级表中不存在精确匹配的 (文种, 子类) 记录。

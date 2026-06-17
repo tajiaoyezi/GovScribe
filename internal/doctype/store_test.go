@@ -44,7 +44,7 @@ func TestPostgresMatrixStoreLooksUpAndMapsMissingRows(t *testing.T) {
 
 	store := NewPostgresMatrixStore(db)
 
-	rows := sqlmock.NewRows(matrixEntryColumns()).AddRow("通知", "举办比赛", "deep_generation", true)
+	rows := sqlmock.NewRows(copyColumns(matrixColumns)).AddRow("通知", "举办比赛", "deep_generation", true)
 	mock.ExpectQuery("SELECT doctype, subtype, capability_tier, is_starred_rare FROM doctype_capability_matrix WHERE doctype = \\$1 AND subtype = \\$2").
 		WithArgs("通知", "举办比赛").
 		WillReturnRows(rows)
@@ -60,7 +60,7 @@ func TestPostgresMatrixStoreLooksUpAndMapsMissingRows(t *testing.T) {
 
 	mock.ExpectQuery("SELECT doctype, subtype, capability_tier, is_starred_rare FROM doctype_capability_matrix WHERE doctype = \\$1 AND subtype = \\$2").
 		WithArgs("通知", "缺失").
-		WillReturnRows(sqlmock.NewRows(matrixEntryColumns()))
+		WillReturnRows(sqlmock.NewRows(copyColumns(matrixColumns)))
 	if _, err := store.Lookup(context.Background(), "通知", "缺失"); !errors.Is(err, ErrMatrixEntryNotFound) {
 		t.Fatalf("lookup missing error = %v, want ErrMatrixEntryNotFound", err)
 	}
@@ -78,7 +78,7 @@ func TestPostgresMatrixStoreListsEntries(t *testing.T) {
 	defer db.Close()
 
 	store := NewPostgresMatrixStore(db)
-	rows := sqlmock.NewRows(matrixEntryColumns()).
+	rows := sqlmock.NewRows(copyColumns(matrixColumns)).
 		AddRow("函", "复函", "deep_generation", true).
 		AddRow("函", "邀请", "deep_generation", false)
 	mock.ExpectQuery("SELECT doctype, subtype, capability_tier, is_starred_rare FROM doctype_capability_matrix ORDER BY doctype, subtype").

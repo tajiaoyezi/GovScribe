@@ -82,7 +82,7 @@ func defaultRequiredSlots() []SlotRequirement {
 	defaults := map[string][]RequiredSlot{
 		"请示":   {SlotIssuer, SlotRecipient, SlotSubject, SlotKeyMatter},
 		"报告":   {SlotIssuer, SlotRecipient, SlotSubject, SlotKeyMatter},
-		"通知":   {SlotIssuer, SlotRecipient, SlotSubject},
+		"通知":   {SlotIssuer, SlotRecipient, SlotSubject, SlotKeyMatter},
 		"函":    {SlotIssuer, SlotRecipient, SlotSubject},
 		"批复":   {SlotIssuer, SlotRecipient, SlotSubject},
 		"通报":   {SlotIssuer, SlotSubject, SlotKeyMatter},

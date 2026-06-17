@@ -74,9 +74,10 @@ func selectMatrixSQL(suffix string) string {
 	return query
 }
 
-func matrixEntryColumns() []string {
-	out := make([]string, len(matrixColumns))
-	copy(out, matrixColumns)
+// copyColumns 返回列名切片的副本，供测试构造 sqlmock 行集而不共享底层数组。
+func copyColumns(cols []string) []string {
+	out := make([]string, len(cols))
+	copy(out, cols)
 	return out
 }
 

@@ -62,7 +62,8 @@ func TestPostgresSlotStoreReturnsRequiredSlots(t *testing.T) {
 		AddRow(string(SlotIssuer)).
 		AddRow(string(SlotRecipient)).
 		AddRow(string(SlotRecipient)) // 重复应被去重
-	mock.ExpectQuery("SELECT slot FROM doctype_required_slots WHERE doctype = \\$1").
+	// 完整匹配实际 SQL：方向精确匹配项与方向无关项（direction='')并集，Go 侧保序去重。
+	mock.ExpectQuery(`SELECT slot FROM doctype_required_slots WHERE doctype = \$1 AND \(direction = \$2 OR direction = ''\) ORDER BY direction, slot`).
 		WithArgs("请示", "upward").
 		WillReturnRows(rows)
 
@@ -87,7 +88,7 @@ func TestPostgresSlotStoreLists(t *testing.T) {
 	defer db.Close()
 
 	store := NewPostgresSlotStore(db)
-	rows := sqlmock.NewRows(requiredSlotColumnList()).
+	rows := sqlmock.NewRows(copyColumns(requiredSlotColumns)).
 		AddRow("请示", "", string(SlotIssuer)).
 		AddRow("请示", "", string(SlotRecipient))
 	mock.ExpectQuery("SELECT doctype, direction, slot FROM doctype_required_slots ORDER BY doctype, direction, slot").

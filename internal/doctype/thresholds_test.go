@@ -47,7 +47,7 @@ func TestPostgresThresholdStoreGetFallsBackToDefault(t *testing.T) {
 
 	store := NewPostgresThresholdStore(db)
 	mock.ExpectQuery("SELECT confidence_threshold, ambiguity_gap, top_n, max_clarify_rounds FROM doctype_routing_thresholds WHERE id = TRUE").
-		WillReturnRows(sqlmock.NewRows(thresholdColumnList()))
+		WillReturnRows(sqlmock.NewRows(copyColumns(thresholdColumns)))
 
 	got, err := store.Get(context.Background())
 	if err != nil {
@@ -70,7 +70,7 @@ func TestPostgresThresholdStoreGetReadsRow(t *testing.T) {
 
 	store := NewPostgresThresholdStore(db)
 	mock.ExpectQuery("SELECT confidence_threshold, ambiguity_gap, top_n, max_clarify_rounds FROM doctype_routing_thresholds WHERE id = TRUE").
-		WillReturnRows(sqlmock.NewRows(thresholdColumnList()).AddRow(0.55, 0.2, 4, 2))
+		WillReturnRows(sqlmock.NewRows(copyColumns(thresholdColumns)).AddRow(0.55, 0.2, 4, 2))
 
 	got, err := store.Get(context.Background())
 	if err != nil {

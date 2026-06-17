@@ -77,12 +77,6 @@ ON CONFLICT (doctype, direction, slot) DO NOTHING`,
 	return nil
 }
 
-func requiredSlotColumnList() []string {
-	out := make([]string, len(requiredSlotColumns))
-	copy(out, requiredSlotColumns)
-	return out
-}
-
 // PostgresThresholdStore 以 PostgreSQL 为权威源存取可调阈值参数（单行配置）。
 type PostgresThresholdStore struct {
 	db *sql.DB
@@ -131,10 +125,4 @@ VALUES (TRUE, $1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING`,
 		t.ConfidenceThreshold, t.AmbiguityGap, t.TopN, t.MaxClarifyRounds)
 	return err
-}
-
-func thresholdColumnList() []string {
-	out := make([]string, len(thresholdColumns))
-	copy(out, thresholdColumns)
-	return out
 }

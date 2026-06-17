@@ -8,8 +8,8 @@ import (
 
 func TestBuildClassificationPromptEmbedsRestrictedLabelSet(t *testing.T) {
 	prompt := BuildClassificationPrompt(defaultMatrix())
-	// 受限标签集应含 A 表文种及其代表子类。
-	for _, must := range []string{"通知", "请示", "召开会议", "组织成立"} {
+	// 受限标签集应含 A 表文种及其代表子类，以及 B 表文种（整文种级，供判别可路由 c07）。
+	for _, must := range []string{"通知", "请示", "召开会议", "组织成立", "命令", "决议", "简报"} {
 		if !strings.Contains(prompt, must) {
 			t.Fatalf("prompt missing label %q", must)
 		}

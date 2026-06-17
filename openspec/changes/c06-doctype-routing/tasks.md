@@ -8,11 +8,11 @@
 
 ## 2. 文种判别能力（doctype-classification）
 
-- [ ] 2.1 实现**场景描述入口**接收：接受用户自然语言场景文本作为唯一必填入口，不强制前置弹出文种选择列表（对齐「自然语言场景描述入口」Requirement）。验证：未选文种仅提交场景描述即可触发判别流程。
-- [ ] 2.2 实现**空 / 过短描述拦截**：场景为空或不含可判别事由 / 行文意图线索时拒绝路由，提示用户补充「想写什么 / 给谁 / 为了什么事」，不凭空猜测文种。验证：空串与「帮我写个东西」类输入被拒并给出提示。
-- [ ] 2.3 在 Go 应用层组装判别请求，经 **c01 窄抽象接口**发起意图分类调用（不感知底层供应商，对齐 ADR-0001 D1/D3、design D-06-1）；解析 LLM 返回为「文种 / 代表子类 / 置信度」。验证：命中 A 表场景（如「向上级请求成立节能监测中心」→请示-组织成立）返回正确文种、子类与置信度。
-- [ ] 2.4 实现 **B 表文种能力档标注**：判别落 B 表文种（如「任免某同志职务的命令」→命令）时标注其能力档（模版辅助写 / 框架写 / 待计划训练），供路由分流消费。验证：命令类场景判出「命令」且能力档标为「模版辅助写」。
-- [ ] 2.5 实现**行文方向推断**：按 1.3 规则表叠加 LLM 方向线索产出最终行文方向（上行 / 下行 / 平行）。验证：「向上级单位申请经费」判为上行、「对下级请示的答复」判为下行、「与同级商洽工作」判为平行。
+- [x] 2.1 实现**场景描述入口**接收：接受用户自然语言场景文本作为唯一必填入口，不强制前置弹出文种选择列表（对齐「自然语言场景描述入口」Requirement）。验证：未选文种仅提交场景描述即可触发判别流程。（实现：`internal/doctype/classifier.go` `Classifier.Classify(ctx, sceneText, securityLevel, actorID, requestID)` 以场景文本为唯一必填入口、无需预选文种；HTTP/前端入口属 §8。对应 `TestClassifyParsesOutputAnnotatesDeepTierAndCarriesSecurityLevel`）
+- [x] 2.2 实现**空 / 过短描述拦截**：场景为空或不含可判别事由 / 行文意图线索时拒绝路由，提示用户补充「想写什么 / 给谁 / 为了什么事」，不凭空猜测文种。验证：空串与「帮我写个东西」类输入被拒并给出提示。（实现：调用模型前做结构化拦截——空白 → `ErrEmptyScene`、过短 → `ErrSceneDescriptionTooShort`；语义层「笼统无可判别线索」（如「帮我写个东西」）由模型低置信路径承接——§3 Top-N 候选 / §6 澄清，系统绝不凭空猜测文种。对应 `TestClassifyRejectsEmptyAndTooShortBeforeCallingModel`）
+- [x] 2.3 在 Go 应用层组装判别请求，经 **c01 窄抽象接口**发起意图分类调用（不感知底层供应商，对齐 ADR-0001 D1/D3、design D-06-1）；解析 LLM 返回为「文种 / 代表子类 / 置信度」。验证：命中 A 表场景（如「向上级请求成立节能监测中心」→请示-组织成立）返回正确文种、子类与置信度。（实现：组装 system(判别提示词)+user(场景) 经 `llm.Client.Complete` 发起、ContentSecurityLevel 透传供 c02 出站路由、不直连 SDK；`ParseClassificationOutput` 解析为文种/子类/置信度。对应 `TestClassifyParsesOutputAnnotatesDeepTierAndCarriesSecurityLevel` / `TestClassifyPropagatesModelAndParseErrors`）
+- [x] 2.4 实现 **B 表文种能力档标注**：判别落 B 表文种（如「任免某同志职务的命令」→命令）时标注其能力档（模版辅助写 / 框架写 / 待计划训练），供路由分流消费。验证：命令类场景判出「命令」且能力档标为「模版辅助写」。（实现：`Matrix.Resolve` 标注 `ClassificationResult.Tier`，命令 → `template_assist`。对应 `TestClassifyAnnotatesBTableTier`）
+- [x] 2.5 实现**行文方向推断**：按 1.3 规则表叠加 LLM 方向线索产出最终行文方向（上行 / 下行 / 平行）。验证：「向上级单位申请经费」判为上行、「对下级请示的答复」判为下行、「与同级商洽工作」判为平行。（实现：`ResolveDirection` 叠加规则与 LLM 线索，冲突以规则为准并按系数折减置信度。对应 `TestClassifyResolvesDirectionAndPenalizesConflict` 及 §1 `TestResolveDirection*`）
 
 ## 3. 低置信 / 多义候选与用户确认
 

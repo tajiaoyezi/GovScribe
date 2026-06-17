@@ -34,11 +34,9 @@ func BuildScenarioContext(result ClassificationResult, sceneDescription string, 
 	for k, v := range filled {
 		filledCopy[k] = v
 	}
-	var missingCopy []RequiredSlot
-	if len(missing) > 0 {
-		missingCopy = make([]RequiredSlot, len(missing))
-		copy(missingCopy, missing)
-	}
+	// 始终分配为非 nil 切片，使契约经 JSON 跨 change 移交时空缺失序列化为 [] 而非 null，与 FilledSlots（{}）一致。
+	missingCopy := make([]RequiredSlot, len(missing))
+	copy(missingCopy, missing)
 
 	return ScenarioContext{
 		TargetCapability:     label.TargetCapability,

@@ -77,6 +77,21 @@ func TestBuildScenarioContextRoutesStarredRareToC07(t *testing.T) {
 	}
 }
 
+func TestBuildScenarioContextMissingSlotsNonNilWhenEmpty(t *testing.T) {
+	// 契约跨 change 经 JSON 移交：无缺失要素时 MissingSlots 为空切片而非 nil（[] 而非 null），与 FilledSlots 一致。
+	result := ClassificationResult{Doctype: "通知", Subtype: "召开会议", Tier: TierDeep, Confidence: 0.9}
+	ctx := BuildScenarioContext(result, "关于召开年度会议的通知", nil, nil, llm.ContentSecurityLevelUnclassified)
+	if ctx.MissingSlots == nil {
+		t.Fatalf("MissingSlots = nil, want non-nil empty slice for JSON consistency")
+	}
+	if len(ctx.MissingSlots) != 0 {
+		t.Fatalf("MissingSlots = %#v, want empty", ctx.MissingSlots)
+	}
+	if ctx.FilledSlots == nil {
+		t.Fatalf("FilledSlots = nil, want non-nil empty map")
+	}
+}
+
 func TestBuildScenarioContextCopiesSlotCollections(t *testing.T) {
 	// 契约对已补齐/缺失要素做拷贝，调用方后续修改不应影响契约。
 	result := ClassificationResult{Doctype: "请示", Tier: TierDeep, Confidence: 0.8}

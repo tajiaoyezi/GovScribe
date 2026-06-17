@@ -20,6 +20,9 @@ type ClassificationOutput struct {
 // ErrInvalidClassificationOutput 表示 LLM 返回的判别结果无法解析或不合约（非严格 JSON、置信度越界等）。
 var ErrInvalidClassificationOutput = errors.New("invalid classification output")
 
+// ErrInvalidSlotExtraction 表示 LLM 返回的要素抽取结果无法解析为 JSON 对象。
+var ErrInvalidSlotExtraction = errors.New("invalid slot extraction output")
+
 // BuildClassificationPrompt 依分级表生成判别系统提示词：把文种映射表作为受限标签集嵌入，
 // 要求 LLM 仅在受限文种内判别并输出严格 JSON（对齐 design D-06-1、doctype-classification spec）。
 func BuildClassificationPrompt(entries []MatrixEntry) string {
@@ -138,6 +141,50 @@ func ParseClassificationCandidates(raw string) ([]ClassificationOutput, error) {
 		}
 	}
 	return outs, nil
+}
+
+// BuildSlotExtractionPrompt 生成必需要素抽取提示词：从场景描述抽取给定要素的已知值，未提及留空、不臆造，输出严格 JSON 对象（design D-06-5）。
+func BuildSlotExtractionPrompt(required []RequiredSlot) string {
+	names := make([]string, 0, len(required))
+	for _, s := range required {
+		names = append(names, string(s))
+	}
+	var b strings.Builder
+	b.WriteString("请从用户的自然语言场景描述中抽取下列公文要素的已知值；场景中未提及的要素留空字符串，不要臆造。\n")
+	b.WriteString("只输出一个 JSON 对象，键为要素名、值为抽取到的文本（无则空字符串），不要输出任何额外解释或 Markdown 代码块。\n")
+	b.WriteString("需要抽取的要素：" + strings.Join(names, "、") + "\n")
+	b.WriteString("输出格式示例：{")
+	for i, n := range names {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(fmt.Sprintf("%q:\"\"", n))
+	}
+	b.WriteString("}\n")
+	return b.String()
+}
+
+// ParseSlotExtraction 解析要素抽取 JSON 对象，仅保留 required 中登记且非空的要素值（去除两端空白）。
+func ParseSlotExtraction(raw string, required []RequiredSlot) (map[RequiredSlot]string, error) {
+	trimmed := stripCodeFence(strings.TrimSpace(raw))
+	var m map[string]string
+	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSlotExtraction, err)
+	}
+	allowed := make(map[RequiredSlot]bool, len(required))
+	for _, s := range required {
+		allowed[s] = true
+	}
+	out := make(map[RequiredSlot]string)
+	for k, v := range m {
+		slot := RequiredSlot(k)
+		if allowed[slot] {
+			if val := strings.TrimSpace(v); val != "" {
+				out[slot] = val
+			}
+		}
+	}
+	return out, nil
 }
 
 // stripCodeFence 去除 LLM 输出常见的 ```json ... ``` 代码块包裹。

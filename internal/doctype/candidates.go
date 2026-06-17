@@ -45,6 +45,7 @@ func (c *Classifier) ClassifyCandidates(ctx context.Context, sceneText string, s
 		results = append(results, c.buildResult(out, scene))
 	}
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Confidence > results[j].Confidence })
+	results = dedupeResults(results) // 去重 (文种,子类)，保留置信度最高项，避免重复候选制造假多义或污染列表
 
 	if needsConfirmation(results, th) {
 		if len(results) > topN {
@@ -53,6 +54,21 @@ func (c *Classifier) ClassifyCandidates(ctx context.Context, sceneText string, s
 		return ClassificationDecision{NeedsConfirmation: true, Candidates: results}, nil
 	}
 	return ClassificationDecision{NeedsConfirmation: false, Result: results[0]}, nil
+}
+
+// dedupeResults 按 (文种,子类) 去重，保留先出现项（调用方已按置信度降序，故保留最高置信度项）。
+func dedupeResults(results []ClassificationResult) []ClassificationResult {
+	seen := make(map[[2]string]bool, len(results))
+	out := make([]ClassificationResult, 0, len(results))
+	for _, r := range results {
+		key := [2]string{r.Doctype, r.Subtype}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	return out
 }
 
 // needsConfirmation 判定是否需用户确认（design D-06-2）：Top-1 置信度低于阈值，或 Top-1 与 Top-2 置信度差小于多义间距。
@@ -76,7 +92,9 @@ func needsConfirmation(results []ClassificationResult, th Thresholds) bool {
 // 防御性前置校验：文种不可为空、场景描述须通过空/过短校验（与判别入口同口径，防止被绕过直接调用）。
 // 用户选择不携带模型方向线索，行文方向取文种默认 + 场景线索修正（不发生规则/模型冲突，无置信度折减）。
 func (c *Classifier) ResolveSelection(doctype, subtype, sceneText string) (ClassificationResult, error) {
-	if strings.TrimSpace(doctype) == "" {
+	doctype = strings.TrimSpace(doctype)
+	subtype = strings.TrimSpace(subtype)
+	if doctype == "" {
 		return ClassificationResult{}, ErrEmptyDoctypeSelection
 	}
 	scene, err := validateScene(sceneText)

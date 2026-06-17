@@ -112,6 +112,38 @@ func TestResolveSelectionRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestResolveSelectionTrimsWhitespace(t *testing.T) {
+	// 含空格的用户选择不得破坏分级表精确匹配（否则误降级为兜底）。
+	clf, _ := newTestClassifier(llm.ChatResponse{}, nil)
+	got, err := clf.ResolveSelection("  通知  ", "  召开会议  ", "关于召开年度工作会议的场景描述")
+	if err != nil {
+		t.Fatalf("resolve selection: %v", err)
+	}
+	if got.Doctype != "通知" || got.Subtype != "召开会议" {
+		t.Fatalf("selection = %q/%q, want 通知/召开会议 (trimmed)", got.Doctype, got.Subtype)
+	}
+	if got.Tier != TierDeep {
+		t.Fatalf("tier = %q, want deep (whitespace must not break matrix lookup)", got.Tier)
+	}
+}
+
+func TestClassifyCandidatesDeduplicatesIdenticalCandidates(t *testing.T) {
+	// 模型返回两条相同 (文种,子类)，去重后只剩一条 → 不应制造假多义而要求确认。
+	resp := llm.ChatResponse{Text: `[{"doctype":"通知","subtype":"召开会议","direction":"downward","confidence":0.7},{"doctype":"通知","subtype":"召开会议","direction":"downward","confidence":0.65}]`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "关于召开年度工作会议的通知", llm.ContentSecurityLevelUnclassified, "u", "r", defaultThresholds())
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if dec.NeedsConfirmation {
+		t.Fatalf("NeedsConfirmation = true, want false (duplicate collapses to single high-confidence)")
+	}
+	if dec.Result.Doctype != "通知" {
+		t.Fatalf("result = %#v, want 通知", dec.Result)
+	}
+}
+
 func TestClassifyCandidatesClampsZeroTopN(t *testing.T) {
 	// TopN=0 应被夹为 1：即便模型返回多个候选，需确认时也只保留 1 个。
 	resp := llm.ChatResponse{Text: `[{"doctype":"报告","subtype":"","direction":"","confidence":0.5},{"doctype":"请示","subtype":"","direction":"","confidence":0.45}]`}

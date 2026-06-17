@@ -115,15 +115,17 @@ func (c *Classifier) complete(ctx context.Context, prompt, scene string, securit
 
 // buildResult 将单条判别输出解析为结构化结果：叠加行文方向规则（D-06-4，冲突折减置信度）并标注能力档（D-06-3）。
 func (c *Classifier) buildResult(out ClassificationOutput, scene string) ClassificationResult {
-	direction, ruleOverrode := ResolveDirection(out.Doctype, out.Direction, scene)
+	doctype := strings.TrimSpace(out.Doctype)
+	subtype := strings.TrimSpace(out.Subtype)
+	direction, ruleOverrode := ResolveDirection(doctype, out.Direction, scene)
 	confidence := out.Confidence
 	if ruleOverrode {
 		confidence *= directionConflictConfidencePenalty
 	}
-	entry, _ := c.matrix.Resolve(out.Doctype, out.Subtype)
+	entry, _ := c.matrix.Resolve(doctype, subtype)
 	return ClassificationResult{
-		Doctype:       out.Doctype,
-		Subtype:       out.Subtype,
+		Doctype:       doctype,
+		Subtype:       subtype,
 		Confidence:    confidence,
 		Direction:     direction,
 		Tier:          entry.Tier,

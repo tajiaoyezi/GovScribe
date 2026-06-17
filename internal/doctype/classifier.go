@@ -23,12 +23,16 @@ const minSceneRunes = 4
 const directionConflictConfidencePenalty = 0.8
 
 // ClassificationResult 是文种判别的结构化结果，供 §3 候选、§4 路由、§6 场景上下文契约消费。
+//
+// Tier 与 IsStarredRare 共同构成 2.4 的能力档标注：深做档但标黄稀缺（IsStarredRare=true）与
+// 普通深做档同为 TierDeep，下游路由（§4）须据此区分（标黄稀缺降级 c07），不能仅看 Tier。
 type ClassificationResult struct {
-	Doctype    string
-	Subtype    string
-	Confidence float64
-	Direction  WritingDirection
-	Tier       CapabilityTier
+	Doctype       string
+	Subtype       string
+	Confidence    float64
+	Direction     WritingDirection
+	Tier          CapabilityTier
+	IsStarredRare bool
 }
 
 // Classifier 依据自然语言场景描述判别文种 / 子类，经 c01 窄抽象发起意图分类调用（不感知底层供应商）。
@@ -92,10 +96,11 @@ func (c *Classifier) Classify(ctx context.Context, sceneText string, securityLev
 	entry, _ := c.matrix.Resolve(out.Doctype, out.Subtype)
 
 	return ClassificationResult{
-		Doctype:    out.Doctype,
-		Subtype:    out.Subtype,
-		Confidence: confidence,
-		Direction:  direction,
-		Tier:       entry.Tier,
+		Doctype:       out.Doctype,
+		Subtype:       out.Subtype,
+		Confidence:    confidence,
+		Direction:     direction,
+		Tier:          entry.Tier,
+		IsStarredRare: entry.IsStarredRare,
 	}, nil
 }

@@ -115,3 +115,66 @@ func TestClassifyPropagatesModelAndParseErrors(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidClassificationOutput", err)
 	}
 }
+
+func TestClassifyMarksStarredRareSubtype(t *testing.T) {
+	// A 表深做文种下的标黄稀缺子类：Tier 仍为 deep，但 IsStarredRare 标记应携出，供 §4 降级路由。
+	resp := llm.ChatResponse{Text: `{"doctype":"方案","subtype":"调研方案","direction":"","confidence":0.75}`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	got, err := clf.Classify(context.Background(), "关于推进我区社会治理创新试点工作的调研方案", llm.ContentSecurityLevelUnclassified, "u", "r")
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if got.Tier != TierDeep || !got.IsStarredRare {
+		t.Fatalf("result = %#v, want deep + starred-rare", got)
+	}
+	// 标黄稀缺降级：路由（§4）据 Matrix.Resolve 得 c07，而非仅看 Tier=deep 误路由 c05。
+	if _, target := NewMatrix(DefaultMatrix()).Resolve("方案", "调研方案"); target != CapabilityC07 {
+		t.Fatalf("方案-调研方案 routing target = %q, want c07", target)
+	}
+}
+
+func TestClassifyFallbackForGenericEscapeLabel(t *testing.T) {
+	// 模型无法稳定归类时返回逃逸标签「通用公文」→ 兜底档，无死路。
+	resp := llm.ChatResponse{Text: `{"doctype":"通用公文","subtype":"","direction":"","confidence":0.3}`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	got, err := clf.Classify(context.Background(), "帮我写一份其它类别的材料说明有关情况", llm.ContentSecurityLevelUnclassified, "u", "r")
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if got.Tier != TierFallback || got.IsStarredRare {
+		t.Fatalf("result = %#v, want fallback tier, non-starred", got)
+	}
+}
+
+func TestClassifyDeepDoctypeWithUnknownSubtypeFallsBack(t *testing.T) {
+	// A 表深做文种 + 未登记子类 → 命中文种级兜底档（Tier=fallback），而非误判 deep。
+	resp := llm.ChatResponse{Text: `{"doctype":"通知","subtype":"某种未登记子类","direction":"downward","confidence":0.7}`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	got, err := clf.Classify(context.Background(), "关于某项未登记事务的通知说明", llm.ContentSecurityLevelUnclassified, "u", "r")
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if got.Tier != TierFallback {
+		t.Fatalf("tier = %q, want fallback (deep doctype + unknown subtype)", got.Tier)
+	}
+}
+
+func TestClassifyDoesNotPenalizeWhenDirectionAgrees(t *testing.T) {
+	// 请示默认上行、模型也给上行 → 不冲突，置信度不折减。
+	resp := llm.ChatResponse{Text: `{"doctype":"请示","subtype":"资金费用申请","direction":"upward","confidence":0.88}`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	got, err := clf.Classify(context.Background(), "区政府就活动经费事项报市发改委审定的请示", llm.ContentSecurityLevelUnclassified, "u", "r")
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if got.Direction != DirectionUpward {
+		t.Fatalf("direction = %q, want upward", got.Direction)
+	}
+	if got.Confidence != 0.88 {
+		t.Fatalf("confidence = %v, want unchanged 0.88 (no rule/model conflict)", got.Confidence)
+	}
+}

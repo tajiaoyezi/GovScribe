@@ -22,6 +22,18 @@ func TestBuildClassificationPromptEmbedsRestrictedLabelSet(t *testing.T) {
 	}
 }
 
+func TestBuildClassificationPromptDeduplicatesSubtypes(t *testing.T) {
+	entries := []MatrixEntry{
+		{Doctype: "通知", Subtype: "召开会议", Tier: TierDeep},
+		{Doctype: "通知", Subtype: "召开会议", Tier: TierDeep}, // 重复项，应被去重
+		{Doctype: "通知", Subtype: "开展活动", Tier: TierDeep},
+	}
+	prompt := BuildClassificationPrompt(entries)
+	if got := strings.Count(prompt, "召开会议"); got != 1 {
+		t.Fatalf("\"召开会议\" 在受限标签集出现 %d 次, want 1（去重）", got)
+	}
+}
+
 func TestParseClassificationOutputParsesStrictJSON(t *testing.T) {
 	got, err := ParseClassificationOutput(`{"doctype":"请示","subtype":"组织成立","direction":"upward","confidence":0.92}`)
 	if err != nil {

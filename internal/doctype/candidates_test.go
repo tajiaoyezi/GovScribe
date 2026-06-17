@@ -144,6 +144,43 @@ func TestClassifyCandidatesDeduplicatesIdenticalCandidates(t *testing.T) {
 	}
 }
 
+func TestClassifyCandidatesIncludesGenericEscapeCandidate(t *testing.T) {
+	// 候选流中模型可返回逃逸标签「通用公文」→ 标注兜底档随候选返回（路由 §4 据此走 c07）。
+	resp := llm.ChatResponse{Text: `[{"doctype":"通用公文","subtype":"","direction":"","confidence":0.4},{"doctype":"通知","subtype":"召开会议","direction":"downward","confidence":0.35}]`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "帮我写一份不太确定类别的材料说明", llm.ContentSecurityLevelUnclassified, "u", "r", defaultThresholds())
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if !dec.NeedsConfirmation || len(dec.Candidates) != 2 {
+		t.Fatalf("decision = %#v, want confirmation with 2 candidates", dec)
+	}
+	if dec.Candidates[0].Doctype != "通用公文" || dec.Candidates[0].Tier != TierFallback {
+		t.Fatalf("top candidate = %#v, want 通用公文 fallback", dec.Candidates[0])
+	}
+}
+
+func TestClassifyCandidatesPreservesStarredRareFlag(t *testing.T) {
+	// 候选中含 A 表标黄稀缺子类：IsStarredRare 须随候选携出，供 §4 区分降级 c07。
+	resp := llm.ChatResponse{Text: `[{"doctype":"方案","subtype":"调研方案","direction":"","confidence":0.65},{"doctype":"方案","subtype":"工作方案","direction":"","confidence":0.6}]`}
+	clf, _ := newTestClassifier(resp, nil)
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "关于推进某项试点工作的方案安排", llm.ContentSecurityLevelUnclassified, "u", "r", defaultThresholds())
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if !dec.NeedsConfirmation || len(dec.Candidates) != 2 {
+		t.Fatalf("decision = %#v, want confirmation with 2 candidates", dec)
+	}
+	if dec.Candidates[0].Subtype != "调研方案" || !dec.Candidates[0].IsStarredRare {
+		t.Fatalf("top candidate = %#v, want 调研方案 starred-rare", dec.Candidates[0])
+	}
+	if dec.Candidates[1].Subtype != "工作方案" || dec.Candidates[1].IsStarredRare {
+		t.Fatalf("second candidate = %#v, want 工作方案 non-starred", dec.Candidates[1])
+	}
+}
+
 func TestClassifyCandidatesClampsZeroTopN(t *testing.T) {
 	// TopN=0 应被夹为 1：即便模型返回多个候选，需确认时也只保留 1 个。
 	resp := llm.ChatResponse{Text: `[{"doctype":"报告","subtype":"","direction":"","confidence":0.5},{"doctype":"请示","subtype":"","direction":"","confidence":0.45}]`}
@@ -191,6 +228,8 @@ func TestNeedsConfirmationBoundaries(t *testing.T) {
 		// 注：恰好等于多义间距受浮点表示影响，故验证明显高于/低于间距两侧而非精确相等点。
 		{"间距明显大于多义间距 → 直选", []ClassificationResult{{Confidence: 0.9}, {Confidence: 0.7}}, false},
 		{"间距明显小于多义间距 → 候选", []ClassificationResult{{Confidence: 0.9}, {Confidence: 0.8}}, true},
+		// 0.75-0.6 在 IEEE754 下略大于 0.15，严格 < 判定为不进候选（直选），固定 spec「差小于间距」边界语义。
+		{"间距约等于多义间距 → 直选（严格<）", []ClassificationResult{{Confidence: 0.75}, {Confidence: 0.6}}, false},
 		{"空候选 → 候选（fail-safe）", nil, true},
 	}
 	for _, c := range cases {

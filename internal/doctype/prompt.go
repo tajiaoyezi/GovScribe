@@ -45,13 +45,18 @@ func BuildClassificationPrompt(entries []MatrixEntry) string {
 func labelSetLines(entries []MatrixEntry) []string {
 	subtypes := make(map[string][]string)
 	order := make([]string, 0)
+	seen := make(map[string]bool)
 	for _, e := range entries {
-		if _, seen := subtypes[e.Doctype]; !seen {
+		if _, ok := subtypes[e.Doctype]; !ok {
 			order = append(order, e.Doctype)
 			subtypes[e.Doctype] = nil
 		}
 		if e.Subtype != "" {
-			subtypes[e.Doctype] = append(subtypes[e.Doctype], e.Subtype)
+			key := e.Doctype + "\x00" + e.Subtype
+			if !seen[key] { // 防御性去重，避免重复子类污染受限标签集
+				seen[key] = true
+				subtypes[e.Doctype] = append(subtypes[e.Doctype], e.Subtype)
+			}
 		}
 	}
 	sort.Strings(order)

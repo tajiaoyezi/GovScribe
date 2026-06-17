@@ -60,7 +60,10 @@ func TestClassifyCandidatesLowConfidenceTriggersConfirmation(t *testing.T) {
 func TestResolveSelectionOverridesModelChoice(t *testing.T) {
 	// 模型 Top-1 可能为「报告」，用户改选「请示」→ 以用户选择为最终文种继续。
 	clf, _ := newTestClassifier(llm.ChatResponse{}, nil)
-	got := clf.ResolveSelection("请示", "组织成立", "区政府关于成立节能监测中心的事项")
+	got, err := clf.ResolveSelection("请示", "组织成立", "区政府关于成立节能监测中心的事项")
+	if err != nil {
+		t.Fatalf("resolve selection: %v", err)
+	}
 	if got.Doctype != "请示" || got.Subtype != "组织成立" {
 		t.Fatalf("selection = %#v, want 请示-组织成立", got)
 	}
@@ -69,6 +72,61 @@ func TestResolveSelectionOverridesModelChoice(t *testing.T) {
 	}
 	if got.Confidence != 1.0 {
 		t.Fatalf("confidence = %v, want 1.0 (user-confirmed)", got.Confidence)
+	}
+}
+
+func TestResolveSelectionAcrossMatrixTiers(t *testing.T) {
+	// 用户可改选任意候选，覆盖 B 表 / 标黄稀缺 / A 表未登记子类各路径。
+	clf, _ := newTestClassifier(llm.ChatResponse{}, nil)
+	scene := "关于某具体事项的写作场景描述"
+	cases := []struct {
+		doctype, subtype string
+		wantTier         CapabilityTier
+		wantStarred      bool
+	}{
+		{"命令", "任免令", TierTemplateAssist, false}, // B 表
+		{"方案", "调研方案", TierDeep, true},           // A 表标黄稀缺
+		{"通知", "某未登记子类", TierFallback, false},    // A 表深做 + 未登记子类 → 兜底
+	}
+	for _, c := range cases {
+		got, err := clf.ResolveSelection(c.doctype, c.subtype, scene)
+		if err != nil {
+			t.Fatalf("%s-%s: %v", c.doctype, c.subtype, err)
+		}
+		if got.Tier != c.wantTier || got.IsStarredRare != c.wantStarred {
+			t.Fatalf("%s-%s = tier %q starred %v, want %q %v", c.doctype, c.subtype, got.Tier, got.IsStarredRare, c.wantTier, c.wantStarred)
+		}
+		if got.Confidence != 1.0 {
+			t.Fatalf("%s-%s confidence = %v, want 1.0", c.doctype, c.subtype, got.Confidence)
+		}
+	}
+}
+
+func TestResolveSelectionRejectsInvalidInput(t *testing.T) {
+	clf, _ := newTestClassifier(llm.ChatResponse{}, nil)
+	if _, err := clf.ResolveSelection("", "x", "关于某事项的场景描述"); !errors.Is(err, ErrEmptyDoctypeSelection) {
+		t.Fatalf("empty doctype error = %v, want ErrEmptyDoctypeSelection", err)
+	}
+	if _, err := clf.ResolveSelection("请示", "组织成立", "  "); !errors.Is(err, ErrEmptyScene) {
+		t.Fatalf("empty scene error = %v, want ErrEmptyScene", err)
+	}
+}
+
+func TestClassifyCandidatesClampsZeroTopN(t *testing.T) {
+	// TopN=0 应被夹为 1：即便模型返回多个候选，需确认时也只保留 1 个。
+	resp := llm.ChatResponse{Text: `[{"doctype":"报告","subtype":"","direction":"","confidence":0.5},{"doctype":"请示","subtype":"","direction":"","confidence":0.45}]`}
+	clf, _ := newTestClassifier(resp, nil)
+	th := Thresholds{ConfidenceThreshold: 0.6, AmbiguityGap: 0.15, TopN: 0, MaxClarifyRounds: 3}
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "就某事项的处理情况作出说明", llm.ContentSecurityLevelUnclassified, "u", "r", th)
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if !dec.NeedsConfirmation {
+		t.Fatalf("want NeedsConfirmation (low confidence)")
+	}
+	if len(dec.Candidates) != 1 {
+		t.Fatalf("candidates = %d, want 1 (TopN=0 clamped to 1)", len(dec.Candidates))
 	}
 }
 

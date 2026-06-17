@@ -108,7 +108,7 @@ func BuildCandidatesPrompt(entries []MatrixEntry, topN int) string {
 	var b strings.Builder
 	b.WriteString("你是公文文种判别助手。请依据用户的自然语言写作场景描述，判别其可能对应的公文文种与代表子类。\n")
 	b.WriteString("必须遵守：\n")
-	b.WriteString(fmt.Sprintf("1. 返回一个 JSON 数组，按置信度从高到低排列，最多 %d 个候选；仅在高度确信单一文种时才返回 1 个。\n", topN))
+	b.WriteString(fmt.Sprintf("1. 返回一个 JSON 数组，按置信度从高到低排列，最多 %d 个候选；当多个文种匹配度相近（均有竞争力）时必须列出所有有竞争力的候选，仅在单一文种明显胜出时才返回 1 个。\n", topN))
 	b.WriteString("2. 文种取值只能从下列受限标签集中选择，不得自创文种；无法稳定归入任一文种时，doctype 返回\"通用公文\"。\n")
 	b.WriteString("3. 每个候选含 doctype/subtype/direction/confidence 四字段；direction 取 upward/downward/horizontal，不确定留空字符串；confidence 为 0 到 1 之间小数。\n")
 	b.WriteString("4. 只输出 JSON 数组，不要输出任何额外解释或 Markdown 代码块。\n")

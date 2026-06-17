@@ -45,6 +45,14 @@ func TestParseClassificationOutputParsesStrictJSON(t *testing.T) {
 	}
 }
 
+func TestParseClassificationOutputAcceptsConfidenceBoundaries(t *testing.T) {
+	for _, conf := range []string{"0.0", "1.0"} {
+		if _, err := ParseClassificationOutput(`{"doctype":"通知","subtype":"","direction":"","confidence":` + conf + `}`); err != nil {
+			t.Fatalf("confidence %s rejected: %v (boundary values are valid)", conf, err)
+		}
+	}
+}
+
 func TestParseClassificationOutputStripsCodeFence(t *testing.T) {
 	raw := "```json\n{\"doctype\":\"通知\",\"subtype\":\"召开会议\",\"direction\":\"downward\",\"confidence\":0.8}\n```"
 	got, err := ParseClassificationOutput(raw)

@@ -2,11 +2,15 @@ package doctype
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
+
+// ErrEmptyDoctypeSelection 表示用户选择覆盖时未给出文种。
+var ErrEmptyDoctypeSelection = errors.New("empty doctype selection")
 
 // ClassificationDecision 是判别后的分支决策（design D-06-2）：
 // 高置信单义直接放行单一结果；低置信或多义返回按置信度降序的 Top-N 候选供用户确认，绝不静默选定单一文种。
@@ -52,6 +56,7 @@ func (c *Classifier) ClassifyCandidates(ctx context.Context, sceneText string, s
 }
 
 // needsConfirmation 判定是否需用户确认（design D-06-2）：Top-1 置信度低于阈值，或 Top-1 与 Top-2 置信度差小于多义间距。
+// 采用严格小于（<）：置信度恰等于阈值、或差恰等于多义间距时不触发确认，与 spec「低于阈值」「差小于间距」语义一致。
 func needsConfirmation(results []ClassificationResult, th Thresholds) bool {
 	if len(results) == 0 {
 		return true
@@ -67,9 +72,17 @@ func needsConfirmation(results []ClassificationResult, th Thresholds) bool {
 
 // ResolveSelection 以用户最终选择的文种 / 子类覆盖模型判别（design D-06-2，人为最终把关），
 // 据所选文种重解析能力档与行文方向后作为最终结果继续路由与要素校验；用户确认故置信度记为 1.0。
+//
+// 防御性前置校验：文种不可为空、场景描述须通过空/过短校验（与判别入口同口径，防止被绕过直接调用）。
 // 用户选择不携带模型方向线索，行文方向取文种默认 + 场景线索修正（不发生规则/模型冲突，无置信度折减）。
-func (c *Classifier) ResolveSelection(doctype, subtype, sceneText string) ClassificationResult {
-	scene := strings.TrimSpace(sceneText)
+func (c *Classifier) ResolveSelection(doctype, subtype, sceneText string) (ClassificationResult, error) {
+	if strings.TrimSpace(doctype) == "" {
+		return ClassificationResult{}, ErrEmptyDoctypeSelection
+	}
+	scene, err := validateScene(sceneText)
+	if err != nil {
+		return ClassificationResult{}, err
+	}
 	direction, _ := ResolveDirection(doctype, DirectionUnspecified, scene)
 	entry, _ := c.matrix.Resolve(doctype, subtype)
 	return ClassificationResult{
@@ -79,5 +92,5 @@ func (c *Classifier) ResolveSelection(doctype, subtype, sceneText string) Classi
 		Direction:     direction,
 		Tier:          entry.Tier,
 		IsStarredRare: entry.IsStarredRare,
-	}
+	}, nil
 }

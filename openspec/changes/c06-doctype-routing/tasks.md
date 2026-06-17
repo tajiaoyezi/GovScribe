@@ -22,10 +22,10 @@
 
 ## 4. 按能力档分流路由（c05 / c07）
 
-- [ ] 4.1 实现**A 表→c05 路由**：命中 A 表 9 个深做文种时目标 capability 标 c05（对齐「按能力档分流路由」Requirement、D-06-3）。验证：通知-召开会议路由目标标 c05。
-- [ ] 4.2 实现**B 表 / 稀缺子类 / 无法归类→c07 路由**：B 表其余文种、A 表内标黄稀缺子类（如方案-调研 <100 条）、无法稳定归类的场景一律标 c07 通用兜底。验证：方案-调研标 c07、命令标 c07、无法归类场景标 c07。
-- [ ] 4.3 实现**无死路硬约束**：任何场景最终都得到 c05 或 c07 的路由结论，绝不返回「无法处理」（对齐 PRD Milestone 4 口径、D-06-3）。验证：构造刻意无法归类输入仍兜底到 c07 且无错误返回。
-- [ ] 4.4 实现**结构化路由标签**：路由结果含目标 capability、文种、子类、行文方向，不直接调用 c05 / c07（调用由上层编排在放行后发起）。验证：路由产物为结构化标签对象，断言不含对下游生成的直接调用。
+- [x] 4.1 实现**A 表→c05 路由**：命中 A 表 9 个深做文种时目标 capability 标 c05（对齐「按能力档分流路由」Requirement、D-06-3）。验证：通知-召开会议路由目标标 c05。（实现：`internal/doctype/routing.go` `Route` + `routeCapability`，深做且非标黄 → c05。对应 `TestRouteDeepNonStarredToC05`）
+- [x] 4.2 实现**B 表 / 稀缺子类 / 无法归类→c07 路由**：B 表其余文种、A 表内标黄稀缺子类（如方案-调研 <100 条）、无法稳定归类的场景一律标 c07 通用兜底。验证：方案-调研标 c07、命令标 c07、无法归类场景标 c07。（实现：`routeCapability` 对标黄稀缺 / B 表各档 / 兜底统一 c07。对应 `TestRouteToC07ForStarredBTableAndFallback`）
+- [x] 4.3 实现**无死路硬约束**：任何场景最终都得到 c05 或 c07 的路由结论，绝不返回「无法处理」（对齐 PRD Milestone 4 口径、D-06-3）。验证：构造刻意无法归类输入仍兜底到 c07 且无错误返回。（实现：`Route` 为纯函数恒返回 c05/c07（含零值/未知能力档），无 error、无空值。对应 `TestRouteNeverReturnsDeadEnd`）
+- [x] 4.4 实现**结构化路由标签**：路由结果含目标 capability、文种、子类、行文方向，不直接调用 c05 / c07（调用由上层编排在放行后发起）。验证：路由产物为结构化标签对象，断言不含对下游生成的直接调用。（实现：`RouteLabel` 结构化标签（capability/文种/子类/方向）；`Route` 为纯函数不持有下游 client、不发起任何生成调用。对应 `TestRoutePreservesStructuredLabelFields` / `TestRouteConsistentWithMatrixTargetCapability`）
 
 ## 5. 要素校验与澄清式追问（slot-clarification）
 

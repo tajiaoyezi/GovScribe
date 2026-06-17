@@ -78,18 +78,66 @@ func ParseClassificationOutput(raw string) (ClassificationOutput, error) {
 	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
 		return ClassificationOutput{}, fmt.Errorf("%w: %v", ErrInvalidClassificationOutput, err)
 	}
+	if err := validateClassificationOutput(out); err != nil {
+		return ClassificationOutput{}, err
+	}
+	return out, nil
+}
+
+// validateClassificationOutput 校验单条判别输出合约：非空文种、置信度 ∈ [0,1]、方向取值合法。
+func validateClassificationOutput(out ClassificationOutput) error {
 	if out.Doctype == "" {
-		return ClassificationOutput{}, fmt.Errorf("%w: empty doctype", ErrInvalidClassificationOutput)
+		return fmt.Errorf("%w: empty doctype", ErrInvalidClassificationOutput)
 	}
 	if out.Confidence < 0 || out.Confidence > 1 {
-		return ClassificationOutput{}, fmt.Errorf("%w: confidence %v out of [0,1]", ErrInvalidClassificationOutput, out.Confidence)
+		return fmt.Errorf("%w: confidence %v out of [0,1]", ErrInvalidClassificationOutput, out.Confidence)
 	}
 	switch out.Direction {
 	case DirectionUpward, DirectionDownward, DirectionHorizontal, DirectionUnspecified:
 	default:
-		return ClassificationOutput{}, fmt.Errorf("%w: invalid direction %q", ErrInvalidClassificationOutput, out.Direction)
+		return fmt.Errorf("%w: invalid direction %q", ErrInvalidClassificationOutput, out.Direction)
 	}
-	return out, nil
+	return nil
+}
+
+// BuildCandidatesPrompt 生成 Top-N 候选判别提示词：要求 LLM 在受限标签集内按置信度降序返回最多 topN 个候选 JSON 数组（design D-06-2）。
+func BuildCandidatesPrompt(entries []MatrixEntry, topN int) string {
+	if topN < 1 {
+		topN = 1
+	}
+	var b strings.Builder
+	b.WriteString("你是公文文种判别助手。请依据用户的自然语言写作场景描述，判别其可能对应的公文文种与代表子类。\n")
+	b.WriteString("必须遵守：\n")
+	b.WriteString(fmt.Sprintf("1. 返回一个 JSON 数组，按置信度从高到低排列，最多 %d 个候选；仅在高度确信单一文种时才返回 1 个。\n", topN))
+	b.WriteString("2. 文种取值只能从下列受限标签集中选择，不得自创文种；无法稳定归入任一文种时，doctype 返回\"通用公文\"。\n")
+	b.WriteString("3. 每个候选含 doctype/subtype/direction/confidence 四字段；direction 取 upward/downward/horizontal，不确定留空字符串；confidence 为 0 到 1 之间小数。\n")
+	b.WriteString("4. 只输出 JSON 数组，不要输出任何额外解释或 Markdown 代码块。\n")
+	b.WriteString("输出格式：[{\"doctype\":\"\",\"subtype\":\"\",\"direction\":\"\",\"confidence\":0.0}]\n\n")
+	b.WriteString("受限文种标签集（文种：代表子类）：\n")
+	for _, line := range labelSetLines(entries) {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// ParseClassificationCandidates 解析 LLM 返回的候选 JSON 数组，容忍代码块包裹并逐项校验合约；空数组视为不合约。
+func ParseClassificationCandidates(raw string) ([]ClassificationOutput, error) {
+	trimmed := stripCodeFence(strings.TrimSpace(raw))
+	var outs []ClassificationOutput
+	if err := json.Unmarshal([]byte(trimmed), &outs); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidClassificationOutput, err)
+	}
+	if len(outs) == 0 {
+		return nil, fmt.Errorf("%w: empty candidate list", ErrInvalidClassificationOutput)
+	}
+	for _, out := range outs {
+		if err := validateClassificationOutput(out); err != nil {
+			return nil, err
+		}
+	}
+	return outs, nil
 }
 
 // stripCodeFence 去除 LLM 输出常见的 ```json ... ``` 代码块包裹。

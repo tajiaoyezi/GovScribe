@@ -16,9 +16,9 @@
 
 ## 3. 低置信 / 多义候选与用户确认
 
-- [ ] 3.1 实现**置信度阈值与多义判定**：置信度低于阈值，或 Top-1 与 Top-2 置信度差小于多义间距时，进入候选返回分支（对齐 D-06-2）。验证：高置信单义场景不触发候选、低置信 / 多义场景触发候选。
-- [ ] 3.2 实现 **Top-N 候选返回**：按置信度降序返回候选文种 + 代表子类 + 置信度，绝不静默选定单一文种直接路由（对齐「低置信与多义时返回 Top-N 候选」Requirement）。验证：「把某事处理情况向上级讲清楚」返回含「报告」「请示」的候选列表而非自行选定。
-- [ ] 3.3 实现**用户选择覆盖模型判别**：用户在候选中确认或改选后，以用户最终选择作为最终文种继续路由与要素校验（人是最终把关者）。验证：模型 Top-1 为「报告」、用户改选「请示」时，后续以「请示」继续。
+- [x] 3.1 实现**置信度阈值与多义判定**：置信度低于阈值，或 Top-1 与 Top-2 置信度差小于多义间距时，进入候选返回分支（对齐 D-06-2）。验证：高置信单义场景不触发候选、低置信 / 多义场景触发候选。（实现：`internal/doctype/candidates.go` `needsConfirmation`（消费 §1 可调阈值 Thresholds），`ClassifyCandidates` 据此决定直选或候选。对应 `TestClassifyCandidatesDirectSelectsHighConfidenceSingle` / `TestClassifyCandidatesLowConfidenceTriggersConfirmation` / `TestClassifyCandidatesReturnsRankedTopNForAmbiguous`）
+- [x] 3.2 实现 **Top-N 候选返回**：按置信度降序返回候选文种 + 代表子类 + 置信度，绝不静默选定单一文种直接路由（对齐「低置信与多义时返回 Top-N 候选」Requirement）。验证：「把某事处理情况向上级讲清楚」返回含「报告」「请示」的候选列表而非自行选定。（实现：`BuildCandidatesPrompt`/`ParseClassificationCandidates` 取受限标签集内 Top-N 候选数组，`ClassifyCandidates` 按置信度降序排序、`NeedsConfirmation` 时返回候选列表不直选。对应 `TestClassifyCandidatesReturnsRankedTopNForAmbiguous`）
+- [x] 3.3 实现**用户选择覆盖模型判别**：用户在候选中确认或改选后，以用户最终选择作为最终文种继续路由与要素校验（人是最终把关者）。验证：模型 Top-1 为「报告」、用户改选「请示」时，后续以「请示」继续。（实现：`Classifier.ResolveSelection(doctype, subtype, scene)` 以用户选择重解析能力档与行文方向、置信度记 1.0 作为最终结果。对应 `TestResolveSelectionOverridesModelChoice`）
 
 ## 4. 按能力档分流路由（c05 / c07）
 

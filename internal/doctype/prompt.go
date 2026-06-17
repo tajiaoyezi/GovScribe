@@ -1,0 +1,101 @@
+package doctype
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// ClassificationOutput 是判别 LLM 必须返回的结构化 JSON（对齐 design D-06-1）：
+// 文种 / 代表子类 / 行文方向线索 / 归一化置信度。
+type ClassificationOutput struct {
+	Doctype    string           `json:"doctype"`
+	Subtype    string           `json:"subtype"`
+	Direction  WritingDirection `json:"direction"`
+	Confidence float64          `json:"confidence"`
+}
+
+// ErrInvalidClassificationOutput 表示 LLM 返回的判别结果无法解析或不合约（非严格 JSON、置信度越界等）。
+var ErrInvalidClassificationOutput = errors.New("invalid classification output")
+
+// BuildClassificationPrompt 依分级表生成判别系统提示词：把文种映射表作为受限标签集嵌入，
+// 要求 LLM 仅在受限文种内判别并输出严格 JSON（对齐 design D-06-1、doctype-classification spec）。
+func BuildClassificationPrompt(entries []MatrixEntry) string {
+	var b strings.Builder
+	b.WriteString("你是公文文种判别助手。请依据用户的自然语言写作场景描述，判别其对应的公文文种与代表子类。\n")
+	b.WriteString("必须遵守：\n")
+	b.WriteString("1. 文种取值只能从下列受限标签集中选择，不得自创文种；无法稳定归入任一文种时，doctype 返回\"通用公文\"。\n")
+	b.WriteString("2. 子类应取所判文种下的代表子类；若无合适子类可留空。\n")
+	b.WriteString("3. direction 为行文方向线索，取值 upward(上行)/downward(下行)/horizontal(平行)，不确定留空字符串。\n")
+	b.WriteString("4. confidence 为归一化置信度，取 0 到 1 之间的小数。\n")
+	b.WriteString("5. 只输出一个 JSON 对象，不要输出任何额外解释或 Markdown 代码块。\n")
+	b.WriteString("输出 JSON 格式：{\"doctype\":\"\",\"subtype\":\"\",\"direction\":\"\",\"confidence\":0.0}\n\n")
+	b.WriteString("受限文种标签集（文种：代表子类）：\n")
+	for _, line := range labelSetLines(entries) {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// labelSetLines 把分级表整理为「文种：子类1、子类2…」的受限标签集行（按文种聚合、稳定排序）。
+func labelSetLines(entries []MatrixEntry) []string {
+	subtypes := make(map[string][]string)
+	order := make([]string, 0)
+	for _, e := range entries {
+		if _, seen := subtypes[e.Doctype]; !seen {
+			order = append(order, e.Doctype)
+			subtypes[e.Doctype] = nil
+		}
+		if e.Subtype != "" {
+			subtypes[e.Doctype] = append(subtypes[e.Doctype], e.Subtype)
+		}
+	}
+	sort.Strings(order)
+	lines := make([]string, 0, len(order))
+	for _, doctype := range order {
+		if subs := subtypes[doctype]; len(subs) > 0 {
+			lines = append(lines, fmt.Sprintf("%s：%s", doctype, strings.Join(subs, "、")))
+		} else {
+			lines = append(lines, doctype)
+		}
+	}
+	return lines
+}
+
+// ParseClassificationOutput 解析 LLM 返回的判别 JSON，容忍包裹的 Markdown 代码块，并校验合约。
+func ParseClassificationOutput(raw string) (ClassificationOutput, error) {
+	trimmed := stripCodeFence(strings.TrimSpace(raw))
+	var out ClassificationOutput
+	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
+		return ClassificationOutput{}, fmt.Errorf("%w: %v", ErrInvalidClassificationOutput, err)
+	}
+	if out.Doctype == "" {
+		return ClassificationOutput{}, fmt.Errorf("%w: empty doctype", ErrInvalidClassificationOutput)
+	}
+	if out.Confidence < 0 || out.Confidence > 1 {
+		return ClassificationOutput{}, fmt.Errorf("%w: confidence %v out of [0,1]", ErrInvalidClassificationOutput, out.Confidence)
+	}
+	switch out.Direction {
+	case DirectionUpward, DirectionDownward, DirectionHorizontal, DirectionUnspecified:
+	default:
+		return ClassificationOutput{}, fmt.Errorf("%w: invalid direction %q", ErrInvalidClassificationOutput, out.Direction)
+	}
+	return out, nil
+}
+
+// stripCodeFence 去除 LLM 输出常见的 ```json ... ``` 代码块包裹。
+func stripCodeFence(s string) string {
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "```")
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:] // 去掉 ```json 这一行剩余的语言标注
+	}
+	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	return strings.TrimSpace(s)
+}

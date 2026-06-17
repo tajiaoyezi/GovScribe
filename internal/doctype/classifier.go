@@ -93,7 +93,13 @@ func validateScene(sceneText string) (string, error) {
 	return scene, nil
 }
 
-// complete 经 c01 窄抽象发起一次判别调用：system(提示词)+user(场景)；内容密级随调用透传供 c02 出站密级路由。
+// complete 是 c06 唯一的模型出站调用收口（保密红线，§7 / design D-06-1 / ADR-0001 D7）：
+//   - 仅经 c01 窄抽象 llm.Client 发起，不直连任何模型 SDK；该 client 在装配期为 c02 装饰后的实例，
+//     使判别 / 抽取调用必经 c02 脱敏网关 + 出站密级路由处置，不可旁路。
+//   - 每次调用均携带 ContentSecurityLevel（由调用方据场景上下文契约传入）供 c02 出站路由；
+//     c06 不自建第二套脱敏 / 密级 / 审计逻辑（出公网脱敏与路由降级/阻断审计由 c02 承载）。
+//   - 错误（含 c02 在外置 NER 不可用 / 无私有可用 / 涉密时的 fail-closed 阻断）原样上抛，
+//     绝不静默吞错或回退发送原文。
 func (c *Classifier) complete(ctx context.Context, prompt, scene string, securityLevel llm.ContentSecurityLevel, actorID, requestID string, maxTokens int) (string, error) {
 	temperature := 0.0
 	mt := maxTokens

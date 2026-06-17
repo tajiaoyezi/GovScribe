@@ -48,10 +48,10 @@
 
 > 依赖：本节判别调用经 c01 统一模型调用入口透传至 c02 的 desensitization-gateway + security-classification-routing；本 change 不自建脱敏 / 密级路由 / 审计。
 
-- [ ] 7.1 判别调用**经 c01 入口透传至 c02 脱敏网关 desensitization-gateway + 出站密级路由 security-classification-routing**发起，不另立保密口径（对齐 design D-06-1、proposal、ADR-0001 D7）。验证：含敏感实体的场景描述确实经 c02 脱敏网关处理，未旁路。
-- [ ] 7.2 实现**密级路由不降级**：非密走公网、敏感走脱敏公网、涉密强制走私有线且永不降级；外置 NER 不可用时默认 fail-closed，绝不静默发原文（对齐 ADR-0001 D7）。验证：模拟 NER 不可用时判别调用被阻断而非发原文；涉密标记场景恒走私有线。
-- [ ] 7.3 澄清回填要素同样**纳入 c02 出站密级路由判定**，不因「只是澄清」而降级处理（对齐 design Risks 密级防越权）。验证：澄清补入的敏感要素经同一 c02 密级路由判定。
-- [ ] 7.4 出公网脱敏与密级路由的降级 / 阻断结果**由 c02 脱敏网关审计承载**，本 change 不自建审计表（承自 c02 脱敏网关审计，落 Postgres、纳入相应密级 ACL）。验证：阻断 / 涉密私有路由事件在 c02 脱敏审计记录中可查。
+- [x] 7.1 判别调用**经 c01 入口透传至 c02 脱敏网关 desensitization-gateway + 出站密级路由 security-classification-routing**发起，不另立保密口径（对齐 design D-06-1、proposal、ADR-0001 D7）。验证：含敏感实体的场景描述确实经 c02 脱敏网关处理，未旁路。（c06 侧：所有模型出站收口于 `Classifier.complete`，仅经 c01 窄抽象 `llm.Client`（装配期为 c02 装饰实例）、无旁路、无 SDK 直连；`TestPackageHasNoDirectModelSDKImports` 依赖扫描禁止 SDK 旁路，`TestOutboundCallsCarryContentSecurityLevel` 验证全路径携密级。「确实经 c02 网关处理」的端到端由 c02 装饰客户端在装配/集成期保证。）
+- [x] 7.2 实现**密级路由不降级**：非密走公网、敏感走脱敏公网、涉密强制走私有线且永不降级；外置 NER 不可用时默认 fail-closed，绝不静默发原文（对齐 ADR-0001 D7）。验证：模拟 NER 不可用时判别调用被阻断而非发原文；涉密标记场景恒走私有线。（c06 侧：`TestOutboundCallsPropagateFailClosedBlock` 验证 c02 fail-closed 阻断错误被原样上抛、绝不吞错回退发原文；涉密密级原样透传供 c02 强制私有。密级路由/降级判定本体属 c02，c06 不另立。）
+- [x] 7.3 澄清回填要素同样**纳入 c02 出站密级路由判定**，不因「只是澄清」而降级处理（对齐 design Risks 密级防越权）。验证：澄清补入的敏感要素经同一 c02 密级路由判定。（c06 侧：澄清抽取 `ExtractSlots` 与判别走同一 `complete` 收口并携同一密级（`TestExtractSlotsParsesKnownElementsAndCarriesSecurityLevel` / `TestOutboundCallsCarryContentSecurityLevel`）；补齐要素经契约 `OutboundSecurityLevel` 随下游出站调用同口径纳入 c02 判定。）
+- [x] 7.4 出公网脱敏与密级路由的降级 / 阻断结果**由 c02 脱敏网关审计承载**，本 change 不自建审计表（承自 c02 脱敏网关审计，落 Postgres、纳入相应密级 ACL）。验证：阻断 / 涉密私有路由事件在 c02 脱敏审计记录中可查。（c06 侧：internal/doctype 无任何审计表/审计代码、无相关迁移——审计由 c02 装饰链承载；c06 阻断/转私有事件随经 c02 的调用由 c02 审计留痕，「可查」在 c02 审计能力（已实现）+ 集成期验证。）
 
 ## 8. 前端入口与交互（React + Ant Design）
 

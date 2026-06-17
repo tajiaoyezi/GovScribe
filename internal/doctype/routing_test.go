@@ -12,6 +12,24 @@ func TestRouteDeepNonStarredToC05(t *testing.T) {
 	}
 }
 
+func TestRouteAllDeepDoctypesToC05(t *testing.T) {
+	// 4.1 验收：全部 9 个 A 表深做文种（非标黄）一致路由到 c05。
+	for _, doctype := range deepDoctypes {
+		if got := Route(ClassificationResult{Doctype: doctype, Tier: TierDeep}).TargetCapability; got != CapabilityC05 {
+			t.Fatalf("%s (deep) → %q, want c05", doctype, got)
+		}
+	}
+}
+
+func TestRoutePreservesAllDirections(t *testing.T) {
+	// 4.4：四种行文方向均原样保留进路由标签。
+	for _, dir := range []WritingDirection{DirectionUpward, DirectionDownward, DirectionHorizontal, DirectionUnspecified} {
+		if got := Route(ClassificationResult{Doctype: "通知", Tier: TierDeep, Direction: dir}).Direction; got != dir {
+			t.Fatalf("direction %q not preserved, got %q", dir, got)
+		}
+	}
+}
+
 func TestRouteToC07ForStarredBTableAndFallback(t *testing.T) {
 	// 4.2：A 表标黄稀缺、B 表各档、兜底/未知 → 一律 c07。
 	cases := []struct {

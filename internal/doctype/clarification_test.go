@@ -114,6 +114,28 @@ func TestExtractSlotsPropagatesParseError(t *testing.T) {
 	}
 }
 
+func TestFillSlotEmptyValueConsumesRoundWithoutBackfill(t *testing.T) {
+	// 空/空白补充不回填，但仍消耗一轮（该轮视为未补齐）。
+	state := ClarificationState{Required: []RequiredSlot{SlotRecipient}, Filled: map[RequiredSlot]string{}, Round: 0, MaxRounds: 3}
+	next := FillSlot(state, SlotRecipient, "   ")
+	if _, ok := next.Filled[SlotRecipient]; ok {
+		t.Fatalf("filled = %#v, want 主送机关 not backfilled (empty value)", next.Filled)
+	}
+	if next.Round != 1 {
+		t.Fatalf("round = %d, want 1 (empty answer still consumes a round)", next.Round)
+	}
+}
+
+func TestParseSlotExtractionStripsCodeFence(t *testing.T) {
+	got, err := ParseSlotExtraction("```json\n{\"发文单位\":\"区政府\"}\n```", []RequiredSlot{SlotIssuer})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got[SlotIssuer] != "区政府" {
+		t.Fatalf("slots = %#v, want 发文单位=区政府 (code fence stripped)", got)
+	}
+}
+
 func TestParseSlotExtractionFiltersToRequired(t *testing.T) {
 	got, err := ParseSlotExtraction(`{"发文单位":"区政府","主送机关":"市发改委"}`, []RequiredSlot{SlotIssuer})
 	if err != nil {

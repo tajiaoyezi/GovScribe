@@ -72,3 +72,49 @@ func TestParseClassificationOutputRejectsInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestParseClassificationCandidates(t *testing.T) {
+	t.Run("valid array preserves order", func(t *testing.T) {
+		outs, err := ParseClassificationCandidates(`[{"doctype":"报告","subtype":"年度","direction":"upward","confidence":0.7},{"doctype":"请示","subtype":"","direction":"","confidence":0.6}]`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(outs) != 2 || outs[0].Doctype != "报告" || outs[1].Doctype != "请示" {
+			t.Fatalf("outs = %#v", outs)
+		}
+	})
+	t.Run("code fence wrapped array", func(t *testing.T) {
+		outs, err := ParseClassificationCandidates("```json\n[{\"doctype\":\"通知\",\"confidence\":0.9}]\n```")
+		if err != nil || len(outs) != 1 {
+			t.Fatalf("outs = %#v, err = %v", outs, err)
+		}
+	})
+	t.Run("rejects object not array", func(t *testing.T) {
+		if _, err := ParseClassificationCandidates(`{"doctype":"通知","confidence":0.5}`); !errors.Is(err, ErrInvalidClassificationOutput) {
+			t.Fatalf("error = %v, want ErrInvalidClassificationOutput", err)
+		}
+	})
+	t.Run("rejects empty array", func(t *testing.T) {
+		if _, err := ParseClassificationCandidates(`[]`); !errors.Is(err, ErrInvalidClassificationOutput) {
+			t.Fatalf("error = %v, want ErrInvalidClassificationOutput", err)
+		}
+	})
+	t.Run("rejects when any item invalid", func(t *testing.T) {
+		if _, err := ParseClassificationCandidates(`[{"doctype":"通知","confidence":0.5},{"doctype":"报告","confidence":1.5}]`); !errors.Is(err, ErrInvalidClassificationOutput) {
+			t.Fatalf("error = %v, want ErrInvalidClassificationOutput", err)
+		}
+	})
+}
+
+func TestBuildCandidatesPrompt(t *testing.T) {
+	prompt := BuildCandidatesPrompt(defaultMatrix(), 3)
+	for _, must := range []string{"最多 3 个", "JSON 数组", "通知", "请示", "命令", "通用公文"} {
+		if !strings.Contains(prompt, must) {
+			t.Fatalf("candidates prompt missing %q", must)
+		}
+	}
+	// TopN < 1 应被夹为 1。
+	if !strings.Contains(BuildCandidatesPrompt(defaultMatrix(), 0), "最多 1 个") {
+		t.Fatalf("TopN=0 should clamp to 1 in prompt")
+	}
+}

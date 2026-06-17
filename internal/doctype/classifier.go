@@ -22,6 +22,12 @@ const minSceneRunes = 4
 // directionConflictConfidencePenalty 是行文方向规则与 LLM 线索冲突时对置信度的折减系数（MVP 经验值，待实测定档）。
 const directionConflictConfidencePenalty = 0.8
 
+// 判别调用的输出 token 上界：单结果判别用较小预算，Top-N 候选数组需更多 token。
+const (
+	classifyMaxTokens   = 256
+	candidatesMaxTokens = 512
+)
+
 // ClassificationResult 是文种判别的结构化结果，供 §3 候选、§4 路由、§6 场景上下文契约消费。
 //
 // Tier 与 IsStarredRare 共同构成 2.4 的能力档标注：深做档但标黄稀缺（IsStarredRare=true）与
@@ -64,7 +70,7 @@ func (c *Classifier) Classify(ctx context.Context, sceneText string, securityLev
 	if err != nil {
 		return ClassificationResult{}, err
 	}
-	text, err := c.complete(ctx, c.prompt, scene, securityLevel, actorID, requestID)
+	text, err := c.complete(ctx, c.prompt, scene, securityLevel, actorID, requestID, classifyMaxTokens)
 	if err != nil {
 		return ClassificationResult{}, err
 	}
@@ -88,15 +94,15 @@ func validateScene(sceneText string) (string, error) {
 }
 
 // complete 经 c01 窄抽象发起一次判别调用：system(提示词)+user(场景)；内容密级随调用透传供 c02 出站密级路由。
-func (c *Classifier) complete(ctx context.Context, prompt, scene string, securityLevel llm.ContentSecurityLevel, actorID, requestID string) (string, error) {
+func (c *Classifier) complete(ctx context.Context, prompt, scene string, securityLevel llm.ContentSecurityLevel, actorID, requestID string, maxTokens int) (string, error) {
 	temperature := 0.0
-	maxTokens := 512
+	mt := maxTokens
 	resp, err := c.client.Complete(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: prompt},
 			{Role: llm.RoleUser, Content: scene},
 		},
-		Params:               llm.GenerationParams{Temperature: &temperature, MaxTokens: &maxTokens},
+		Params:               llm.GenerationParams{Temperature: &temperature, MaxTokens: &mt},
 		ContentSecurityLevel: securityLevel,
 		ActorID:              actorID,
 		RequestID:            requestID,

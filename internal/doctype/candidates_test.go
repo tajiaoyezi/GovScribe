@@ -88,3 +88,61 @@ func TestClassifyCandidatesPropagatesParseError(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidClassificationOutput", err)
 	}
 }
+
+func TestNeedsConfirmationBoundaries(t *testing.T) {
+	th := defaultThresholds() // ConfidenceThreshold 0.6, AmbiguityGap 0.15
+	cases := []struct {
+		name    string
+		results []ClassificationResult
+		want    bool
+	}{
+		{"置信度恰等于阈值 → 直选", []ClassificationResult{{Confidence: 0.6}}, false},
+		{"置信度略低于阈值 → 候选", []ClassificationResult{{Confidence: 0.59}}, true},
+		// 注：恰好等于多义间距受浮点表示影响，故验证明显高于/低于间距两侧而非精确相等点。
+		{"间距明显大于多义间距 → 直选", []ClassificationResult{{Confidence: 0.9}, {Confidence: 0.7}}, false},
+		{"间距明显小于多义间距 → 候选", []ClassificationResult{{Confidence: 0.9}, {Confidence: 0.8}}, true},
+		{"空候选 → 候选（fail-safe）", nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := needsConfirmation(c.results, th); got != c.want {
+				t.Fatalf("needsConfirmation = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestClassifyCandidatesTruncatesToTopN(t *testing.T) {
+	// 4 个低置信候选 + TopN=2 → 触发确认并按降序截断为 2。
+	resp := llm.ChatResponse{Text: `[{"doctype":"通知","subtype":"","direction":"","confidence":0.5},{"doctype":"通报","subtype":"","direction":"","confidence":0.45},{"doctype":"报告","subtype":"","direction":"","confidence":0.4},{"doctype":"请示","subtype":"","direction":"","confidence":0.35}]`}
+	clf, _ := newTestClassifier(resp, nil)
+	th := Thresholds{ConfidenceThreshold: 0.6, AmbiguityGap: 0.15, TopN: 2, MaxClarifyRounds: 3}
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "就某事项的处理情况作出说明", llm.ContentSecurityLevelUnclassified, "u", "r", th)
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if !dec.NeedsConfirmation {
+		t.Fatalf("want NeedsConfirmation")
+	}
+	if len(dec.Candidates) != 2 {
+		t.Fatalf("candidates = %d, want 2 (truncated to TopN)", len(dec.Candidates))
+	}
+	if dec.Candidates[0].Doctype != "通知" || dec.Candidates[1].Doctype != "通报" {
+		t.Fatalf("top2 = %#v, want 通知,通报", dec.Candidates)
+	}
+}
+
+func TestClassifyCandidatesKeepsAllWhenCountEqualsTopN(t *testing.T) {
+	resp := llm.ChatResponse{Text: `[{"doctype":"通知","subtype":"","direction":"","confidence":0.5},{"doctype":"通报","subtype":"","direction":"","confidence":0.45},{"doctype":"报告","subtype":"","direction":"","confidence":0.4}]`}
+	clf, _ := newTestClassifier(resp, nil)
+	th := Thresholds{ConfidenceThreshold: 0.6, AmbiguityGap: 0.15, TopN: 3, MaxClarifyRounds: 3}
+
+	dec, err := clf.ClassifyCandidates(context.Background(), "就某事项的处理情况作出说明", llm.ContentSecurityLevelUnclassified, "u", "r", th)
+	if err != nil {
+		t.Fatalf("classify candidates: %v", err)
+	}
+	if len(dec.Candidates) != 3 {
+		t.Fatalf("candidates = %d, want 3 (count == TopN, no truncation)", len(dec.Candidates))
+	}
+}

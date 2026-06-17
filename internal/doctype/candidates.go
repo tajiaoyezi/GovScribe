@@ -23,7 +23,11 @@ func (c *Classifier) ClassifyCandidates(ctx context.Context, sceneText string, s
 	if err != nil {
 		return ClassificationDecision{}, err
 	}
-	text, err := c.complete(ctx, BuildCandidatesPrompt(c.entries, th.TopN), scene, securityLevel, actorID, requestID)
+	topN := th.TopN
+	if topN < 1 {
+		topN = 1
+	}
+	text, err := c.complete(ctx, BuildCandidatesPrompt(c.entries, topN), scene, securityLevel, actorID, requestID, candidatesMaxTokens)
 	if err != nil {
 		return ClassificationDecision{}, err
 	}
@@ -39,8 +43,8 @@ func (c *Classifier) ClassifyCandidates(ctx context.Context, sceneText string, s
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Confidence > results[j].Confidence })
 
 	if needsConfirmation(results, th) {
-		if th.TopN > 0 && len(results) > th.TopN {
-			results = results[:th.TopN]
+		if len(results) > topN {
+			results = results[:topN]
 		}
 		return ClassificationDecision{NeedsConfirmation: true, Candidates: results}, nil
 	}
@@ -62,10 +66,18 @@ func needsConfirmation(results []ClassificationResult, th Thresholds) bool {
 }
 
 // ResolveSelection 以用户最终选择的文种 / 子类覆盖模型判别（design D-06-2，人为最终把关），
-// 重解析能力档与行文方向后作为最终结果继续路由与要素校验；用户确认故置信度记为 1.0。
+// 据所选文种重解析能力档与行文方向后作为最终结果继续路由与要素校验；用户确认故置信度记为 1.0。
+// 用户选择不携带模型方向线索，行文方向取文种默认 + 场景线索修正（不发生规则/模型冲突，无置信度折减）。
 func (c *Classifier) ResolveSelection(doctype, subtype, sceneText string) ClassificationResult {
 	scene := strings.TrimSpace(sceneText)
-	result := c.buildResult(ClassificationOutput{Doctype: doctype, Subtype: subtype, Confidence: 1.0}, scene)
-	result.Confidence = 1.0
-	return result
+	direction, _ := ResolveDirection(doctype, DirectionUnspecified, scene)
+	entry, _ := c.matrix.Resolve(doctype, subtype)
+	return ClassificationResult{
+		Doctype:       doctype,
+		Subtype:       subtype,
+		Confidence:    1.0,
+		Direction:     direction,
+		Tier:          entry.Tier,
+		IsStarredRare: entry.IsStarredRare,
+	}
 }

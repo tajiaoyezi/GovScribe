@@ -22,6 +22,12 @@ const minSceneRunes = 4
 // directionConflictConfidencePenalty 是行文方向规则与 LLM 线索冲突时对置信度的折减系数（MVP 经验值，待实测定档）。
 const directionConflictConfidencePenalty = 0.8
 
+// 判别调用的输出 token 上界：单结果判别用较小预算，Top-N 候选数组需更多 token。
+const (
+	classifyMaxTokens   = 256
+	candidatesMaxTokens = 512
+)
+
 // ClassificationResult 是文种判别的结构化结果，供 §3 候选、§4 路由、§6 场景上下文契约消费。
 //
 // Tier 与 IsStarredRare 共同构成 2.4 的能力档标注：深做档但标黄稀缺（IsStarredRare=true）与
@@ -37,17 +43,21 @@ type ClassificationResult struct {
 
 // Classifier 依据自然语言场景描述判别文种 / 子类，经 c01 窄抽象发起意图分类调用（不感知底层供应商）。
 type Classifier struct {
-	client llm.Client
-	matrix *Matrix
-	prompt string
+	client  llm.Client
+	matrix  *Matrix
+	entries []MatrixEntry
+	prompt  string
 }
 
 // NewClassifier 用 c01 窄抽象 client 与分级表记录构造判别器；判别提示词与分级表解析视图在构造时一次性生成。
 func NewClassifier(client llm.Client, entries []MatrixEntry) *Classifier {
+	cp := make([]MatrixEntry, len(entries))
+	copy(cp, entries)
 	return &Classifier{
-		client: client,
-		matrix: NewMatrix(entries),
-		prompt: BuildClassificationPrompt(entries),
+		client:  client,
+		matrix:  NewMatrix(entries),
+		entries: cp,
+		prompt:  BuildClassificationPrompt(entries),
 	}
 }
 
@@ -56,51 +66,69 @@ func NewClassifier(client llm.Client, entries []MatrixEntry) *Classifier {
 // securityLevel 为出站请求内容密级，随 c01 窄抽象调用透传，供 c01 公网分支上的 c02 出站密级路由判定；
 // 本方法不自建脱敏 / 密级口径，也不直连模型 SDK。空 / 过短描述在调用模型前被拦截。
 func (c *Classifier) Classify(ctx context.Context, sceneText string, securityLevel llm.ContentSecurityLevel, actorID, requestID string) (ClassificationResult, error) {
+	scene, err := validateScene(sceneText)
+	if err != nil {
+		return ClassificationResult{}, err
+	}
+	text, err := c.complete(ctx, c.prompt, scene, securityLevel, actorID, requestID, classifyMaxTokens)
+	if err != nil {
+		return ClassificationResult{}, err
+	}
+	out, err := ParseClassificationOutput(text)
+	if err != nil {
+		return ClassificationResult{}, err
+	}
+	return c.buildResult(out, scene), nil
+}
+
+// validateScene 对场景描述做结构化前置校验（空 / 过短），在调用模型前完成。
+func validateScene(sceneText string) (string, error) {
 	scene := strings.TrimSpace(sceneText)
 	if scene == "" {
-		return ClassificationResult{}, ErrEmptyScene
+		return "", ErrEmptyScene
 	}
 	if utf8.RuneCountInString(scene) < minSceneRunes {
-		return ClassificationResult{}, ErrSceneDescriptionTooShort
+		return "", ErrSceneDescriptionTooShort
 	}
+	return scene, nil
+}
 
+// complete 经 c01 窄抽象发起一次判别调用：system(提示词)+user(场景)；内容密级随调用透传供 c02 出站密级路由。
+func (c *Classifier) complete(ctx context.Context, prompt, scene string, securityLevel llm.ContentSecurityLevel, actorID, requestID string, maxTokens int) (string, error) {
 	temperature := 0.0
-	maxTokens := 256
+	mt := maxTokens
 	resp, err := c.client.Complete(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: c.prompt},
+			{Role: llm.RoleSystem, Content: prompt},
 			{Role: llm.RoleUser, Content: scene},
 		},
-		Params:               llm.GenerationParams{Temperature: &temperature, MaxTokens: &maxTokens},
+		Params:               llm.GenerationParams{Temperature: &temperature, MaxTokens: &mt},
 		ContentSecurityLevel: securityLevel,
 		ActorID:              actorID,
 		RequestID:            requestID,
 	})
 	if err != nil {
-		return ClassificationResult{}, err
+		return "", err
 	}
+	return resp.Text, nil
+}
 
-	out, err := ParseClassificationOutput(resp.Text)
-	if err != nil {
-		return ClassificationResult{}, err
-	}
-
-	// 行文方向：文种默认方向 + 机关关系线索修正，与 LLM 线索取并、冲突以规则为准并折减置信度（D-06-4）。
-	direction, ruleOverrode := ResolveDirection(out.Doctype, out.Direction, scene)
+// buildResult 将单条判别输出解析为结构化结果：叠加行文方向规则（D-06-4，冲突折减置信度）并标注能力档（D-06-3）。
+func (c *Classifier) buildResult(out ClassificationOutput, scene string) ClassificationResult {
+	doctype := strings.TrimSpace(out.Doctype)
+	subtype := strings.TrimSpace(out.Subtype)
+	direction, ruleOverrode := ResolveDirection(doctype, out.Direction, scene)
 	confidence := out.Confidence
 	if ruleOverrode {
 		confidence *= directionConflictConfidencePenalty
 	}
-
-	// 能力档标注（含 B 表文种）：查分级表解析视图（D-06-3）；未知文种合成兜底档。
-	entry, _ := c.matrix.Resolve(out.Doctype, out.Subtype)
-
+	entry, _ := c.matrix.Resolve(doctype, subtype)
 	return ClassificationResult{
-		Doctype:       out.Doctype,
-		Subtype:       out.Subtype,
+		Doctype:       doctype,
+		Subtype:       subtype,
 		Confidence:    confidence,
 		Direction:     direction,
 		Tier:          entry.Tier,
 		IsStarredRare: entry.IsStarredRare,
-	}, nil
+	}
 }

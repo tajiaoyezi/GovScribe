@@ -70,6 +70,77 @@ export async function resetPassword(token: string, userId: string, password: str
   });
 }
 
+// ===== c06 文种判别 / 候选确认 / 要素澄清（请求-响应，不流式）=====
+
+export type SecurityLevel = "" | "unclassified" | "sensitive" | "classified";
+
+export type CandidateView = {
+  doctype: string;
+  subtype: string;
+  direction: string;
+  confidence: number;
+  tier: string;
+  isStarredRare: boolean;
+  targetCapability: string;
+};
+
+export type ClassifyResponse = {
+  needsConfirmation: boolean;
+  result?: CandidateView;
+  candidates?: CandidateView[];
+};
+
+export type ScenarioContextView = {
+  targetCapability: string;
+  doctype: string;
+  subtype: string;
+  direction: string;
+  confidence: number;
+  sceneDescription: string;
+  filledSlots: Record<string, string>;
+  missingSlots: string[];
+  contentSecurityLevel: string;
+};
+
+export type ClarifyResponse = {
+  done: boolean;
+  askingSlot?: string;
+  question?: string;
+  filled: Record<string, string>;
+  round: number;
+  context?: ScenarioContextView;
+};
+
+export type ClarifyInput = {
+  doctype: string;
+  subtype: string;
+  scene: string;
+  securityLevel: SecurityLevel;
+  filled: Record<string, string>;
+  round: number;
+  skipped: boolean;
+};
+
+export async function classifyDoctype(
+  token: string,
+  scene: string,
+  securityLevel: SecurityLevel
+): Promise<ClassifyResponse> {
+  return request<ClassifyResponse>("/doctype/classify", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ scene, securityLevel })
+  });
+}
+
+export async function clarifyDoctype(token: string, input: ClarifyInput): Promise<ClarifyResponse> {
+  return request<ClarifyResponse>("/doctype/clarify", {
+    method: "POST",
+    token,
+    body: JSON.stringify(input)
+  });
+}
+
 async function request<T>(path: string, init: RequestInit & { token?: string } = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");

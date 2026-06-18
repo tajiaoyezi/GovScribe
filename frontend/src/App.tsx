@@ -39,6 +39,14 @@ import {
 	resetPassword
 } from "./api";
 import {
+  CandidateView,
+  ClarifyResponse,
+  ScenarioContextView,
+  SecurityLevel,
+  classifyDoctype,
+  clarifyDoctype
+} from "./api";
+import {
   RoleCode,
   SessionPrincipal,
   clearToken,
@@ -148,7 +156,7 @@ export function App() {
                     <FileText size={16} /> 工作入口
                   </span>
                 ),
-                children: <RoleWorkbench principal={principal} />
+                children: <RoleWorkbench principal={principal} token={token} />
               }
             ]}
           />
@@ -260,7 +268,8 @@ function RoleSummary({ principal }: { principal: SessionPrincipal }) {
   );
 }
 
-function RoleWorkbench({ principal }: { principal: SessionPrincipal }) {
+function RoleWorkbench({ principal, token }: { principal: SessionPrincipal; token: string }) {
+  const [active, setActive] = useState<string | null>(null);
   const entries = useMemo(() => {
     if (hasRole(principal, "auditor")) {
       return [{ key: "audit", label: "审计只读", icon: <ShieldCheck size={18} /> }];
@@ -278,18 +287,244 @@ function RoleWorkbench({ principal }: { principal: SessionPrincipal }) {
     return items;
   }, [principal]);
 
+  if (active === "draft") {
+    return (
+      <section className="panel">
+        <Button type="link" onClick={() => setActive(null)}>
+          ← 返回工作入口
+        </Button>
+        <WritingWorkbench token={token} />
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
       <Typography.Title level={3}>工作入口</Typography.Title>
       <div className="entryGrid">
         {entries.map((entry) => (
-          <button className="entryButton" key={entry.key} type="button">
+          <button
+            className="entryButton"
+            key={entry.key}
+            type="button"
+            onClick={() => entry.key === "draft" && setActive("draft")}
+          >
             {entry.icon}
             <span>{entry.label}</span>
           </button>
         ))}
       </div>
     </section>
+  );
+}
+
+type WorkPhase = "input" | "confirm" | "clarify" | "done";
+
+const securityOptions: { value: SecurityLevel; label: string }[] = [
+  { value: "unclassified", label: "非密" },
+  { value: "sensitive", label: "敏感" },
+  { value: "classified", label: "涉密" }
+];
+
+const directionLabels: Record<string, string> = {
+  upward: "上行",
+  downward: "下行",
+  horizontal: "平行",
+  "": "未定"
+};
+
+function candidateLabel(c: CandidateView): string {
+  const sub = c.subtype ? ` · ${c.subtype}` : "";
+  return `${c.doctype}${sub}（置信度 ${(c.confidence * 100).toFixed(0)}%）`;
+}
+
+function WritingWorkbench({ token }: { token: string }) {
+  const { message } = AntApp.useApp();
+  const [scene, setScene] = useState("");
+  const [securityLevel, setSecurityLevel] = useState<SecurityLevel>("unclassified");
+  const [phase, setPhase] = useState<WorkPhase>("input");
+  const [candidates, setCandidates] = useState<CandidateView[]>([]);
+  const [doctype, setDoctype] = useState("");
+  const [subtype, setSubtype] = useState("");
+  const [step, setStep] = useState<ClarifyResponse | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [context, setContext] = useState<ScenarioContextView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const onError = (error: unknown) => {
+    if (error instanceof ApiError) {
+      message.error(error.status === 400 ? "请补充「想写什么 / 给谁 / 为了什么事」" : `请求失败（${error.status}）`);
+    } else {
+      message.error("请求失败");
+    }
+  };
+
+  const advanceClarify = async (
+    dt: string,
+    st: string,
+    filled: Record<string, string>,
+    round: number,
+    skipped: boolean
+  ) => {
+    setLoading(true);
+    try {
+      const resp = await clarifyDoctype(token, { doctype: dt, subtype: st, scene, securityLevel, filled, round, skipped });
+      if (resp.done) {
+        setContext(resp.context ?? null);
+        setPhase("done");
+      } else {
+        setStep(resp);
+        setAnswer("");
+        setPhase("clarify");
+      }
+    } catch (error) {
+      onError(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onClassify = async () => {
+    setLoading(true);
+    try {
+      const resp = await classifyDoctype(token, scene, securityLevel);
+      if (resp.needsConfirmation && resp.candidates && resp.candidates.length > 0) {
+        setCandidates(resp.candidates);
+        setPhase("confirm");
+        setLoading(false);
+      } else if (resp.result) {
+        setDoctype(resp.result.doctype);
+        setSubtype(resp.result.subtype);
+        await advanceClarify(resp.result.doctype, resp.result.subtype, {}, 0, false);
+      } else {
+        setLoading(false);
+      }
+    } catch (error) {
+      onError(error);
+      setLoading(false);
+    }
+  };
+
+  const onSelect = async (candidate: CandidateView) => {
+    setDoctype(candidate.doctype);
+    setSubtype(candidate.subtype);
+    await advanceClarify(candidate.doctype, candidate.subtype, {}, 0, false);
+  };
+
+  const onAnswer = async () => {
+    const filled = { ...(step?.filled ?? {}) };
+    if (step?.askingSlot && answer.trim()) {
+      filled[step.askingSlot] = answer.trim();
+    }
+    await advanceClarify(doctype, subtype, filled, (step?.round ?? 0) + 1, false);
+  };
+
+  const onSkip = async () => {
+    await advanceClarify(doctype, subtype, step?.filled ?? {}, step?.round ?? 0, true);
+  };
+
+  const onRestart = () => {
+    setScene("");
+    setPhase("input");
+    setCandidates([]);
+    setStep(null);
+    setContext(null);
+    setDoctype("");
+    setSubtype("");
+    setAnswer("");
+  };
+
+  return (
+    <div className="writingWorkbench">
+      <Typography.Title level={3}>写作工作台</Typography.Title>
+      <Alert
+        className="thinAlert"
+        type="info"
+        showIcon
+        message="用自然语言描述要写什么、给谁、为了什么事——无需先选文种，系统会判别文种并补齐要素。"
+      />
+
+      {phase === "input" && (
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Input.TextArea
+            rows={4}
+            value={scene}
+            placeholder="例如：区政府向市发改委申请一笔活动经费"
+            onChange={(event) => setScene(event.target.value)}
+          />
+          <Space>
+            <span>内容密级</span>
+            <Select<SecurityLevel>
+              value={securityLevel}
+              style={{ width: 120 }}
+              options={securityOptions}
+              onChange={setSecurityLevel}
+            />
+            <Button type="primary" loading={loading} disabled={scene.trim().length < 4} onClick={onClassify}>
+              开始判别
+            </Button>
+          </Space>
+        </Space>
+      )}
+
+      {phase === "confirm" && (
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Alert className="thinAlert" type="warning" showIcon message="识别到多个可能文种，请确认或改选：" />
+          {candidates.map((candidate, index) => (
+            <Button key={`${candidate.doctype}-${candidate.subtype}-${index}`} block loading={loading} onClick={() => onSelect(candidate)}>
+              {candidateLabel(candidate)} → {candidate.targetCapability === "c05" ? "深做生成" : "通用兜底"}
+            </Button>
+          ))}
+          <Button type="link" onClick={onRestart}>
+            重新描述
+          </Button>
+        </Space>
+      )}
+
+      {phase === "clarify" && step && (
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Alert className="thinAlert" type="info" showIcon message={step.question} />
+          <Input
+            value={answer}
+            placeholder="补充该要素，或点「跳过」直接生成初稿"
+            onChange={(event) => setAnswer(event.target.value)}
+            onPressEnter={onAnswer}
+          />
+          <Space>
+            <Button type="primary" loading={loading} disabled={!answer.trim()} onClick={onAnswer}>
+              提交
+            </Button>
+            <Button loading={loading} onClick={onSkip}>
+              跳过、先生成初稿
+            </Button>
+          </Space>
+        </Space>
+      )}
+
+      {phase === "done" && context && (
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <Alert
+            className="thinAlert"
+            type="success"
+            showIcon
+            message={`已确定文种：${context.doctype}${context.subtype ? " · " + context.subtype : ""}`}
+            description={`行文方向 ${directionLabels[context.direction] ?? context.direction} ｜ 目标 ${context.targetCapability === "c05" ? "高频文种深做" : "通用公文兜底"} ｜ 密级 ${context.contentSecurityLevel || "未知"}`}
+          />
+          {context.missingSlots.length > 0 && (
+            <Alert
+              className="thinAlert"
+              type="warning"
+              showIcon
+              message={`以下要素未确认，生成时将谨慎处理、不臆造：${context.missingSlots.join("、")}`}
+            />
+          )}
+          <Typography.Paragraph type="secondary">
+            场景上下文已就绪，将移交下游生成初稿（c05 深做 / c07 兜底，属后续能力）。
+          </Typography.Paragraph>
+          <Button onClick={onRestart}>再写一篇</Button>
+        </Space>
+      )}
+    </div>
   );
 }
 

@@ -2,11 +2,35 @@ package doctype
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
+
+// TestPromptsAreDistinguishableForFakeRouting 固定 pipelineFakeClient 的提示词分流前提：
+// 仅要素抽取提示词含「抽取」、判别/候选提示词不含——若未来提示词措辞变动破坏该前提，本测试先行失败告警，
+// 避免端到端 fake 静默误分流导致假阳性通过。
+func TestPromptsAreDistinguishableForFakeRouting(t *testing.T) {
+	if !strings.Contains(BuildSlotExtractionPrompt([]RequiredSlot{SlotIssuer}), "抽取") {
+		t.Fatalf("slot extraction prompt must contain 抽取 (fake routing key)")
+	}
+	if strings.Contains(BuildClassificationPrompt(defaultMatrix()), "抽取") {
+		t.Fatalf("classification prompt must not contain 抽取 (would break fake routing)")
+	}
+	if strings.Contains(BuildCandidatesPrompt(defaultMatrix(), 3), "抽取") {
+		t.Fatalf("candidates prompt must not contain 抽取 (would break fake routing)")
+	}
+}
+
+func TestPipelineRejectsEmptyScene(t *testing.T) {
+	// 9.1：空场景在管道入口即被拒（不进入判别/路由）。
+	clf := NewClassifier(&pipelineFakeClient{candidates: `[]`, slots: `{}`}, DefaultMatrix())
+	if _, err := clf.ClassifyCandidates(context.Background(), "   ", llm.ContentSecurityLevelUnclassified, "u", "r", defaultThresholds()); !errors.Is(err, ErrEmptyScene) {
+		t.Fatalf("error = %v, want ErrEmptyScene", err)
+	}
+}
 
 // pipelineFakeClient 按提示词类型返回不同响应，支撑端到端串联：判别/候选调用返回候选数组，要素抽取调用返回要素对象。
 type pipelineFakeClient struct {

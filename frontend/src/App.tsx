@@ -341,7 +341,8 @@ function candidateLabel(c: CandidateView): string {
 function WritingWorkbench({ token }: { token: string }) {
   const { message } = AntApp.useApp();
   const [scene, setScene] = useState("");
-  const [securityLevel, setSecurityLevel] = useState<SecurityLevel>("unclassified");
+  // 默认「未知」而非「非密」：未显式定密时按未知发出，由 c02 涉密 fail-closed 兜底（design D-06-7，不缺省非密）。
+  const [securityLevel, setSecurityLevel] = useState<SecurityLevel>("");
   const [phase, setPhase] = useState<WorkPhase>("input");
   const [candidates, setCandidates] = useState<CandidateView[]>([]);
   const [doctype, setDoctype] = useState("");
@@ -412,15 +413,16 @@ function WritingWorkbench({ token }: { token: string }) {
   };
 
   const onAnswer = async () => {
-    const filled = { ...(step?.filled ?? {}) };
-    if (step?.askingSlot && answer.trim()) {
-      filled[step.askingSlot] = answer.trim();
+    if (!step?.askingSlot || !answer.trim()) {
+      return; // 无追问字段或空答复时不提交（避免以 undefined 键污染 filled）
     }
-    await advanceClarify(doctype, subtype, filled, (step?.round ?? 0) + 1, false);
+    const filled = { ...(step.filled ?? {}) };
+    filled[step.askingSlot] = answer.trim();
+    await advanceClarify(doctype, subtype, filled, (step.round ?? 0) + 1, false);
   };
 
   const onSkip = async () => {
-    await advanceClarify(doctype, subtype, step?.filled ?? {}, step?.round ?? 0, true);
+    await advanceClarify(doctype, subtype, step?.filled ?? {}, (step?.round ?? 0) + 1, true);
   };
 
   const onRestart = () => {
@@ -455,8 +457,9 @@ function WritingWorkbench({ token }: { token: string }) {
           <Space>
             <span>内容密级</span>
             <Select<SecurityLevel>
-              value={securityLevel}
-              style={{ width: 120 }}
+              value={securityLevel || undefined}
+              style={{ width: 240 }}
+              placeholder="请选择内容密级（不选则按未知 fail-closed 走私有）"
               options={securityOptions}
               onChange={setSecurityLevel}
             />

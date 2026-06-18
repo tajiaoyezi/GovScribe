@@ -22,15 +22,20 @@ func TestPackageHasNoDirectModelSDKImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse package dir: %v", err)
 	}
-	forbidden := []string{"openai", "anthropic"}
+	// 白名单约束：c06 业务包非测试文件仅可依赖标准库与项目内包（经 c01 窄抽象 internal/llm 调用模型），
+	// 禁止任何第三方包——杜绝任何现有 / 未来模型 SDK（openai / anthropic / 国产等）的旁路，比黑名单更稳健。
 	for _, pkg := range pkgs {
 		for name, f := range pkg.Files {
 			for _, imp := range f.Imports {
-				path := strings.ToLower(strings.Trim(imp.Path.Value, `"`))
-				for _, bad := range forbidden {
-					if strings.Contains(path, bad) {
-						t.Fatalf("%s 直连模型 SDK %q：c06 仅可经 c01 窄抽象调用模型，禁止 SDK 旁路", name, imp.Path.Value)
-					}
+				path := strings.Trim(imp.Path.Value, `"`)
+				firstSeg := path
+				if i := strings.IndexByte(path, '/'); i >= 0 {
+					firstSeg = path[:i]
+				}
+				isStdlib := !strings.Contains(firstSeg, ".") // 标准库首段不含域名点
+				isProject := strings.HasPrefix(path, "github.com/tajiaoyezi/GovScribe/")
+				if !isStdlib && !isProject {
+					t.Fatalf("%s 引入第三方包 %q：c06 业务包仅可依赖标准库与项目内 internal（经 c01 窄抽象调用模型），禁止任何第三方模型 SDK 旁路", name, path)
 				}
 			}
 		}

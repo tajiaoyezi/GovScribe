@@ -55,10 +55,10 @@
 
 ## 8. 前端入口与交互（React + Ant Design）
 
-- [ ] 8.1 写作工作台新增**场景描述入口**：自然语言输入框，不前置强制文种选择列表（对齐 proposal Impact、Migration Plan 步骤 4）。验证：仅输入场景描述即可发起。
-- [ ] 8.2 实现**Top-N 候选确认交互**：展示候选文种 / 子类 / 置信度并支持一键确认或改选（对齐 D-06-2）。验证：多义场景前端弹出候选，用户改选生效。
-- [ ] 8.3 实现**澄清追问与跳过交互**：按需展示针对性追问、支持「跳过、先生成初稿」（对齐 slot-clarification spec）。验证：缺要素时展示追问、跳过按钮可放行。
-- [ ] 8.4 判别 / 澄清交互按**请求-响应**处理，不要求 SSE 流式（正文生成的 SSE 属 c05 / c07，对齐 Non-Goals）。验证：判别 / 澄清接口为普通请求-响应、无流式依赖。
+- [x] 8.1 写作工作台新增**场景描述入口**：自然语言输入框，不前置强制文种选择列表（对齐 proposal Impact、Migration Plan 步骤 4）。验证：仅输入场景描述即可发起。（实现：`frontend/src/App.tsx` `WritingWorkbench` input 阶段——TextArea 场景输入 + 内容密级选择 + 「开始判别」，无前置文种选择；后端 `internal/doctype/http.go` `POST /api/doctype/classify`。RoleWorkbench「起草」入口进入。tsc 严格构建通过。）
+- [x] 8.2 实现**Top-N 候选确认交互**：展示候选文种 / 子类 / 置信度并支持一键确认或改选（对齐 D-06-2）。验证：多义场景前端弹出候选，用户改选生效。（实现：`WritingWorkbench` confirm 阶段展示候选（文种·子类·置信度·目标能力）一键选择/改选，经 clarify 以用户选择继续；后端 classify 返回 candidates。）
+- [x] 8.3 实现**澄清追问与跳过交互**：按需展示针对性追问、支持「跳过、先生成初稿」（对齐 slot-clarification spec）。验证：缺要素时展示追问、跳过按钮可放行。（实现：`WritingWorkbench` clarify 阶段展示针对性问题 + 补充输入 + 「跳过、先生成初稿」；后端 `POST /api/doctype/clarify` 驱动多轮，放行返回场景上下文（含缺失要素标记）。）
+- [x] 8.4 判别 / 澄清交互按**请求-响应**处理，不要求 SSE 流式（正文生成的 SSE 属 c05 / c07，对齐 Non-Goals）。验证：判别 / 澄清接口为普通请求-响应、无流式依赖。（实现：`classifyDoctype` / `clarifyDoctype`（`api.ts` fetch 普通 JSON 请求-响应）+ 后端 `Handler` 纯 JSON 接口，无 SSE/流式；`http_test.go` httptest 验证 classify 直选/候选/空场景400/未认证401、clarify 追问→放行契约/跳过标记缺失/空文种400。）
 
 ## 9. 端到端验证与灰度
 

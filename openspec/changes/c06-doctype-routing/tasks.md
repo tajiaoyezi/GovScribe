@@ -62,10 +62,10 @@
 
 ## 9. 端到端验证与灰度
 
-- [ ] 9.1 编写**判别 + 路由单元 / 集成测试**覆盖各 spec Scenario：请示-上行经费、通知-下行会议、多义报告 / 请示、稀缺方案-调研降级 c07、命令→c07、无法归类兜底 c07。验证：各 Scenario 断言通过。
-- [ ] 9.2 编写**要素澄清测试**覆盖：要素齐备直接放行、识别缺失要素、具体追问、轮次上限停止、用户跳过、补齐回填、缺失标记移交。验证：slot-clarification 各 Scenario 断言通过。
-- [ ] 9.3 端到端灰度典型场景串联（场景输入→判别→候选确认→路由→要素校验→澄清→契约移交），路由与契约符合各 spec（对齐 Migration Plan 步骤 5）。验证：典型场景全链路产出正确契约。
-- [ ] 9.4 验证**回滚路径**：关闭场景描述入口可恢复用户手选文种后送 c05 / c07 的旧路径，配置与契约定义保留、无数据损失（对齐 Migration Plan 回滚策略）。验证：停用判别服务后前端可退回手选文种流程。
+- [x] 9.1 编写**判别 + 路由单元 / 集成测试**覆盖各 spec Scenario：请示-上行经费、通知-下行会议、多义报告 / 请示、稀缺方案-调研降级 c07、命令→c07、无法归类兜底 c07。验证：各 Scenario 断言通过。（实现：`internal/doctype/pipeline_test.go` 集成 + §2–§4 单测覆盖各场景；`TestPipelineScenarioRouting`（通知-召开会议→c05 / 方案-调研方案→c07 / 命令→c07 / 通用公文→c07）/ `TestPipelineAmbiguousThenUserSelects`（多义报告·请示→候选→改选）/ `TestPipelineEndToEndProducesContract`（请示-上行经费）。）
+- [x] 9.2 编写**要素澄清测试**覆盖：要素齐备直接放行、识别缺失要素、具体追问、轮次上限停止、用户跳过、补齐回填、缺失标记移交。验证：slot-clarification 各 Scenario 断言通过。（实现：§5 `clarification_test.go` 覆盖各 Scenario；集成侧 `TestPipelineEndToEndProducesContract`（识别缺失→具体追问→补齐回填）/ `TestPipelineClarificationSkipMarksMissing`（跳过→标记缺失）/ `TestPipelineClarificationRoundLimitReleases`（轮次上限放行+标记）。）
+- [x] 9.3 端到端灰度典型场景串联（场景输入→判别→候选确认→路由→要素校验→澄清→契约移交），路由与契约符合各 spec（对齐 Migration Plan 步骤 5）。验证：典型场景全链路产出正确契约。（实现：`TestPipelineEndToEndProducesContract` 以 fake LLM 串联 ClassifyCandidates→Route→ExtractSlots→澄清循环→BuildScenarioContext，断言契约目标能力/文种/方向/密级/补齐要素正确；编排为上层（§8 handler）职责，测试内联模拟多轮编排。）
+- [x] 9.4 验证**回滚路径**：关闭场景描述入口可恢复用户手选文种后送 c05 / c07 的旧路径，配置与契约定义保留、无数据损失（对齐 Migration Plan 回滚策略）。验证：停用判别服务后前端可退回手选文种流程。（实现：`TestPipelineRollbackManualSelection` 不经判别、以用户手选文种 ResolveSelection→Route→契约，分级表/契约配置保留、产出有效 c05/c07 契约；前端退回手选交互属 §8。）
 
 ## 10. 待 PoC 高风险项（信创 / 私有化 / 国产模型）
 

@@ -188,6 +188,61 @@ func TestHighFreqDraftOrchestratorStopsStreamAndMarksIncompleteWhenCallerCancels
 	}
 }
 
+func TestHighFreqDraftStreamCancellationErrorIsNotDroppedWhenDeltaIsBuffered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	upstream := make(chan llm.StreamEvent, 1)
+	upstream <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: "半截"}
+	events := appendHighFreqStreamMetadata(ctx, upstream, streamMetadataForCancellationTest())
+	waitForBufferedHighFreqEvents(t, events, 1)
+
+	cancel()
+	first, ok := receiveHighFreqStreamEvent(t, events)
+	if !ok {
+		t.Fatal("stream closed before buffered delta")
+	}
+	if first.Type != llm.StreamEventTypeDelta || first.Delta != "半截" {
+		t.Fatalf("first event = %#v, want buffered delta", first)
+	}
+	tail, ok := receiveHighFreqStreamEvent(t, events)
+	if !ok {
+		t.Fatal("stream closed without cancellation error after buffered delta")
+	}
+	if tail.Type != llm.StreamEventTypeError || tail.ErrorReason != llm.ErrorReasonTimeout {
+		t.Fatalf("tail event = %#v, want timeout error event", tail)
+	}
+	if !errors.Is(tail.Err, context.Canceled) {
+		t.Fatalf("tail error = %v, want context.Canceled", tail.Err)
+	}
+}
+
+func TestHighFreqDraftStreamCancellationWinsOverReadyDoneEvent(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		upstream := make(chan llm.StreamEvent, 1)
+		upstream <- llm.StreamEvent{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop}
+		close(upstream)
+		events := appendHighFreqStreamMetadata(ctx, upstream, streamMetadataForCancellationTest())
+
+		event, ok := receiveHighFreqStreamEvent(t, events)
+		if !ok {
+			t.Fatalf("iteration %d: stream closed without cancellation error", i)
+		}
+		if event.Type == llm.StreamEventTypeDone {
+			t.Fatalf("iteration %d: cancellation must not emit done event: %#v", i, event)
+		}
+		if event.Type != llm.StreamEventTypeError || event.ErrorReason != llm.ErrorReasonTimeout {
+			t.Fatalf("iteration %d: event = %#v, want timeout error event", i, event)
+		}
+		if !errors.Is(event.Err, context.Canceled) {
+			t.Fatalf("iteration %d: event error = %v, want context.Canceled", i, event.Err)
+		}
+		if got, ok := receiveHighFreqStreamEvent(t, events); ok {
+			t.Fatalf("iteration %d: unexpected event after cancellation tail: %#v", i, got)
+		}
+	}
+}
+
 func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest(t *testing.T) {
 	completeClient := &recordingCompleteClient{response: llm.ChatResponse{Text: "正文片段", FinishReason: llm.FinishReasonStop}}
 	streamClient := &recordingStreamClient{
@@ -351,6 +406,33 @@ func receiveHighFreqStreamEvent(t *testing.T, events <-chan HighFreqDraftStreamE
 		t.Fatal("timed out waiting for high frequency stream event")
 	}
 	return HighFreqDraftStreamEvent{}, false
+}
+
+func waitForBufferedHighFreqEvents(t *testing.T, events <-chan HighFreqDraftStreamEvent, n int) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(events) >= n {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d buffered high frequency stream event(s), got %d", n, len(events))
+		case <-ticker.C:
+		}
+	}
+}
+
+func streamMetadataForCancellationTest() HighFreqDraftStreamMetadata {
+	return HighFreqDraftStreamMetadata{
+		HighFreqDraftResponseContext: HighFreqDraftResponseContext{
+			RequestID: "req-1",
+			Doctype:   "通知",
+			Subtype:   "召开会议",
+		},
+	}
 }
 
 func joinedHighFreqDeltas(events []HighFreqDraftStreamEvent) string {

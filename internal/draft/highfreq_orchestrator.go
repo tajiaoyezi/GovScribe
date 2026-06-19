@@ -218,6 +218,10 @@ func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.Strea
 		defer close(out)
 		started := false
 		for {
+			if ctx.Err() != nil {
+				sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+				return
+			}
 			select {
 			case <-ctx.Done():
 				sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
@@ -227,6 +231,10 @@ func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.Strea
 					if ctx.Err() != nil {
 						sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					}
+					return
+				}
+				if ctx.Err() != nil {
+					sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					return
 				}
 				wrapped := wrapHighFreqStreamEvent(event, metadata, !started)
@@ -265,10 +273,7 @@ func highFreqCanceledStreamEvent(ctx context.Context, metadata HighFreqDraftStre
 }
 
 func sendHighFreqStreamEvent(out chan<- HighFreqDraftStreamEvent, event HighFreqDraftStreamEvent) {
-	select {
-	case out <- event:
-	default:
-	}
+	out <- event
 }
 
 func isTerminalStreamEvent(event llm.StreamEvent) bool {

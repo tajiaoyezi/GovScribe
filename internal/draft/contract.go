@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
@@ -53,6 +54,9 @@ func StreamDraft(ctx context.Context, client llm.Client, input GenerationInput) 
 	req, branch, err := BuildGenerationRequest(input)
 	if err != nil {
 		return nil, "", err
+	}
+	if branch == BranchDeepDoctype {
+		return nil, "", auth.ErrUnauthorized
 	}
 	events, err := client.Stream(ctx, req)
 	if err != nil {

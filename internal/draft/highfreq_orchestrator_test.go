@@ -175,6 +175,25 @@ func TestHighFreqDraftOrchestratorRequiresDraftCreateAuthorization(t *testing.T)
 	}
 }
 
+func TestHighFreqDraftOrchestratorFailsClosedWithoutDraftAuthorizer(t *testing.T) {
+	examples := &recordingTemplateExampleSearcher{}
+	model := &recordingCompleteClient{}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		examples,
+		&recordingCompleteContractReader{},
+		model,
+		HighFreqDraftOrchestratorConfig{},
+	)
+
+	_, err := orchestrator.GenerateDraft(context.Background(), authorizedDraftPrincipal("sec-1"), highFreqDraftInputForRBAC())
+	if !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("err = %v, want auth.ErrUnauthorized", err)
+	}
+	if examples.calls != 0 || model.completeCalls != 0 {
+		t.Fatalf("missing authorizer must fail before c03/c01: c03=%d c01=%d", examples.calls, model.completeCalls)
+	}
+}
+
 func TestHighFreqDraftOrchestratorAllowsDraftCreateAuthorizedPrincipal(t *testing.T) {
 	store := auth.NewMemoryStore()
 	examples := singleExampleSearcher()

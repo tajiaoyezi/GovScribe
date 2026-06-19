@@ -123,6 +123,47 @@ func TestDefaultStructureContractsCarryDirectionToneRules(t *testing.T) {
 	}
 }
 
+func TestDefaultStructureContractsCarryOrganRedlineRules(t *testing.T) {
+	requiredKeywords := []string{
+		"政治性表述必须准确",
+		"不得臆造",
+		"事实",
+		"数据",
+		"文号",
+		"人名",
+		"单位全称",
+		"敏感",
+		"不合规",
+		"占位",
+		"待补",
+		"待人工核稿",
+		"自动发文",
+		"自动提交",
+	}
+
+	for _, contract := range DefaultStructureContracts() {
+		redlines := strings.Join(contract.RedlineRules, "\n")
+		if len(contract.RedlineRules) == 0 {
+			t.Fatalf("%s has no redline rules", contract.Doctype)
+		}
+		for _, keyword := range requiredKeywords {
+			if !strings.Contains(redlines, keyword) {
+				t.Errorf("%s redline rules = %#v, want keyword %q", contract.Doctype, contract.RedlineRules, keyword)
+			}
+		}
+
+		content := BuildPromptTemplateContent(contract)
+		if !strings.Contains(content, "## 机关口径红线") {
+			t.Errorf("%s prompt template missing redline section", contract.Doctype)
+		}
+		for _, keyword := range requiredKeywords {
+			if !strings.Contains(content, keyword) {
+				t.Errorf("%s prompt template redline section missing keyword %q", contract.Doctype, keyword)
+			}
+		}
+	}
+}
+
 func TestMemoryStructureContractStoreGetsAndCopiesDefaults(t *testing.T) {
 	store := NewMemoryStructureContractStore()
 

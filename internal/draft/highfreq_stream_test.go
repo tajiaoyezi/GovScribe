@@ -240,6 +240,42 @@ func TestHighFreqDraftStreamCancellationWinsOverReadyDoneEvent(t *testing.T) {
 	}
 }
 
+func TestHighFreqDraftCancellationEventSurvivesConcurrentBufferDrain(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		out := make(chan HighFreqDraftStreamEvent, 1)
+		out <- HighFreqDraftStreamEvent{StreamEvent: llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: "半截"}}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sendHighFreqCancellationEvent(out, cancellationEventForTest())
+		}()
+
+		first := <-out
+		if first.Type == llm.StreamEventTypeError {
+			<-done
+			continue
+		}
+		select {
+		case tail := <-out:
+			if tail.Type != llm.StreamEventTypeError || tail.ErrorReason != llm.ErrorReasonTimeout {
+				t.Fatalf("iteration %d: tail = %#v, want cancellation error", i, tail)
+			}
+			<-done
+		case <-done:
+			select {
+			case tail := <-out:
+				if tail.Type != llm.StreamEventTypeError || tail.ErrorReason != llm.ErrorReasonTimeout {
+					t.Fatalf("iteration %d: tail after sender returned = %#v, want cancellation error", i, tail)
+				}
+			default:
+				t.Fatalf("iteration %d: cancellation sender returned after concurrent drain without sending error", i)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d: timed out waiting for cancellation error", i)
+		}
+	}
+}
+
 func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest(t *testing.T) {
 	completeClient := &recordingCompleteClient{response: llm.ChatResponse{Text: "正文片段", FinishReason: llm.FinishReasonStop}}
 	streamClient := &recordingStreamClient{
@@ -432,6 +468,16 @@ func streamMetadataForCancellationTest() HighFreqDraftStreamMetadata {
 			RequestID: "req-1",
 			Doctype:   "通知",
 			Subtype:   "召开会议",
+		},
+	}
+}
+
+func cancellationEventForTest() HighFreqDraftStreamEvent {
+	return HighFreqDraftStreamEvent{
+		StreamEvent: llm.StreamEvent{
+			Type:        llm.StreamEventTypeError,
+			ErrorReason: llm.ErrorReasonTimeout,
+			Err:         context.Canceled,
 		},
 	}
 }

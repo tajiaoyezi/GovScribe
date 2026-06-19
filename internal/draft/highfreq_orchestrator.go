@@ -282,7 +282,6 @@ func sendHighFreqCancellationEvent(out chan HighFreqDraftStreamEvent, event High
 		select {
 		case <-out:
 		default:
-			return
 		}
 	}
 }

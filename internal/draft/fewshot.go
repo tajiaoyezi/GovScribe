@@ -63,7 +63,7 @@ func AssembleFewShotPrompt(input FewShotInput) (FewShotPrompt, error) {
 		writeExampleLine(&b, "文号", example.DocumentNumber)
 		writeExampleLine(&b, "来源单位", example.OrganizationName)
 		fmt.Fprintf(&b, "相似度：%.2f\n", example.Score)
-		b.WriteString("正文片段：\n")
+		b.WriteString("脱敏后样例文本（逐字透传）：\n")
 		b.WriteString(example.Text)
 		b.WriteString("\n")
 	}

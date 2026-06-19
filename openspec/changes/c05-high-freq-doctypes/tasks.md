@@ -20,7 +20,7 @@
 
 ## 4. 消费 c06 文种分流上下文
 
-- [ ] 4.1 实现 c06 结构化场景上下文契约的消费层：解析 c06 `doctype-classification` 输出（目标 capability、目标文种、代表子类、行文方向、置信度、用户原始场景描述、已补齐要素、缺失 / 未确认要素标记、内容密级（取值：非密 / 敏感 / 涉密）），仅当目标 capability==c05 时进入本管线；不在 c05 维护任何文种 / 子类能力档分级配置、不复算是否标黄稀缺、不自行判定移交 c07（文种分流与降级移交单一权威 = c06）、不自建密级判定，仅取出上下文中的内容密级备作出站请求密级透传（对齐 c06 文种分流单一权威、design D-2 / D-6）；验证：传入 capability==c05 的上下文进入深做管线并解析出内容密级，传入非 c05 capability 时本管线不处理且不自行移交。
+- [x] 4.1 实现 c06 结构化场景上下文契约的消费层：解析 c06 `doctype-classification` 输出（目标 capability、目标文种、代表子类、行文方向、置信度、用户原始场景描述、已补齐要素、缺失 / 未确认要素标记、内容密级（取值：非密 / 敏感 / 涉密）），仅当目标 capability==c05 时进入本管线；不在 c05 维护任何文种 / 子类能力档分级配置、不复算是否标黄稀缺、不自行判定移交 c07（文种分流与降级移交单一权威 = c06）、不自建密级判定，仅取出上下文中的内容密级备作出站请求密级透传（对齐 c06 文种分流单一权威、design D-2 / D-6）；验证：传入 capability==c05 的上下文进入深做管线并解析出内容密级，传入非 c05 capability 时本管线不处理且不自行移交。（实现：`internal/draft/c06_context.go` 新增 `ConsumeC06ScenarioContext` / `C05ScenarioContext`，仅接受 `TargetCapability==c05` 的 c06 `ScenarioContext` 并复制 9 项字段；非 c05 返回 `ErrScenarioNotForC05`，不转换为 c07 fallback、不查询 c06 分级 / 标黄配置、不改写内容密级。对应 `TestConsumeC06ScenarioContextAcceptsC05AndCarriesNineFields` / `TestConsumeC06ScenarioContextRejectsNonC05WithoutFallbackDecision` / `TestConsumeC06ScenarioContextPreservesUnknownSecurityLevelForFailClosed`；验证：`go test ./internal/draft`。）
 
 ## 5. 初稿生成编排与流式输出（draft-generation-streaming）
 

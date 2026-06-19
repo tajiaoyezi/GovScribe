@@ -159,6 +159,63 @@ func TestHighFreqDraftOrchestratorPromptForbidsLayoutOutput(t *testing.T) {
 	}
 }
 
+func TestHighFreqDraftOrchestratorPassesC06SecurityLevelToC01CompleteAndStream(t *testing.T) {
+	for _, securityLevel := range []llm.ContentSecurityLevel{
+		llm.ContentSecurityLevelUnclassified,
+		llm.ContentSecurityLevelSensitive,
+		llm.ContentSecurityLevelClassified,
+	} {
+		t.Run(string(securityLevel), func(t *testing.T) {
+			input := HighFreqDraftRequestInput{
+				Scenario: doctype.ScenarioContext{
+					TargetCapability:     doctype.CapabilityC05,
+					Doctype:              "通知",
+					Subtype:              "召开会议",
+					Direction:            doctype.DirectionDownward,
+					SceneDescription:     "通知各部门召开年度会议",
+					ContentSecurityLevel: securityLevel,
+				},
+				ActorID:   "actor-1",
+				RequestID: "req-1",
+			}
+
+			completeModel := &recordingCompleteClient{response: llm.ChatResponse{Text: "生成正文"}}
+			_, err := NewHighFreqDraftOrchestrator(
+				singleExampleSearcher(),
+				singleContractReader(t, "通知"),
+				completeModel,
+				allowDraftConfig(2),
+			).GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), input)
+			if err != nil {
+				t.Fatalf("generate draft: %v", err)
+			}
+			if completeModel.lastReq.ContentSecurityLevel != securityLevel {
+				t.Fatalf("complete c01 security level = %q, want %q", completeModel.lastReq.ContentSecurityLevel, securityLevel)
+			}
+
+			streamModel := &recordingStreamClient{
+				streamEvents: []llm.StreamEvent{{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop}},
+			}
+			streamResult, err := NewHighFreqDraftOrchestrator(
+				singleExampleSearcher(),
+				singleContractReader(t, "通知"),
+				streamModel,
+				allowDraftConfig(2),
+			).StreamDraft(context.Background(), authorizedDraftPrincipal("u1"), input)
+			if err != nil {
+				t.Fatalf("stream draft: %v", err)
+			}
+			events := collectHighFreqStreamEvents(streamResult.Events)
+			if streamModel.lastStreamReq.ContentSecurityLevel != securityLevel {
+				t.Fatalf("stream c01 security level = %q, want %q", streamModel.lastStreamReq.ContentSecurityLevel, securityLevel)
+			}
+			if len(events) != 1 || events[0].Metadata == nil || events[0].Metadata.ContentSecurityLevel != securityLevel {
+				t.Fatalf("stream metadata = %#v, want security level %q", events, securityLevel)
+			}
+		})
+	}
+}
+
 func TestHighFreqDraftOrchestratorRequiresDraftCreateAuthorization(t *testing.T) {
 	store := auth.NewMemoryStore()
 	orchestrator := NewHighFreqDraftOrchestrator(

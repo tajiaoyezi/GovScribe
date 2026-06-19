@@ -87,3 +87,46 @@ func TestAssembleFewShotPromptPartitionsC03ExamplesAndScenario(t *testing.T) {
 		}
 	}
 }
+
+func TestAssembleFewShotPromptPassesC03ExampleTextVerbatim(t *testing.T) {
+	c03Text := "  脱敏范文原文：请[单位A]于[日期]前反馈。\n第二段保留  空格、占位符[姓名B]与标点；不得被改写。  "
+
+	result, err := AssembleFewShotPrompt(FewShotInput{
+		Doctype:     "通知",
+		MaxExamples: 1,
+		C03RetrievedExamples: []retrieval.TemplateExample{
+			{ChunkID: "c1", Text: c03Text, DocumentType: "通知"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("assemble few-shot prompt: %v", err)
+	}
+	if len(result.Examples) != 1 || result.Examples[0].Text != c03Text {
+		t.Fatalf("selected example text = %#v, want verbatim c03 text %q", result.Examples, c03Text)
+	}
+
+	wantBlock := "脱敏后样例文本（逐字透传）：\n" + c03Text + "\n"
+	if !strings.Contains(result.Content, wantBlock) {
+		t.Fatalf("prompt must include c03 text verbatim after pass-through marker.\nwant block:\n%q\nprompt:\n%s", wantBlock, result.Content)
+	}
+}
+
+func TestAssembleFewShotPromptDoesNotInventExamplesWhenC03ReturnsNone(t *testing.T) {
+	result, err := AssembleFewShotPrompt(FewShotInput{
+		Doctype:              "通知",
+		SceneDescription:     "通知各部门开会",
+		MaxExamples:          2,
+		C03RetrievedExamples: nil,
+	})
+	if err != nil {
+		t.Fatalf("assemble few-shot prompt: %v", err)
+	}
+	if len(result.Examples) != 0 {
+		t.Fatalf("examples = %#v, want none when c03 returns none", result.Examples)
+	}
+	for _, forbidden := range []string{"范文一：", "示例正文", "参考范文", "模拟范文"} {
+		if strings.Contains(result.Content, forbidden) {
+			t.Fatalf("prompt invented example marker %q:\n%s", forbidden, result.Content)
+		}
+	}
+}

@@ -83,9 +83,12 @@ func TestStructureContractReaderReturnsNoDeepContractForNonHighFrequencyDoctype(
 	templates := &countingPromptTemplateReader{}
 	reader := NewStructureContractReader(NewMemoryStructureContractStore(), templates)
 
-	_, err := reader.Get(ctx, "命令")
+	got, err := reader.Get(ctx, "命令")
 	if err == nil {
 		t.Fatal("get non-high-frequency doctype err = nil, want no deep contract error")
+	}
+	if got.Doctype != "" {
+		t.Fatalf("non-high-frequency result doctype = %q, want empty zero value", got.Doctype)
 	}
 	if !errors.Is(err, ErrNoDeepStructureContract) {
 		t.Fatalf("err = %v, want ErrNoDeepStructureContract", err)
@@ -103,6 +106,15 @@ func TestStructureContractReaderReturnsNoDeepContractForNonHighFrequencyDoctype(
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "c07") || strings.Contains(message, "fallback") || strings.Contains(message, "移交") {
 		t.Fatalf("no deep contract error must not decide fallback/c07 transfer: %q", err.Error())
+	}
+}
+
+func TestStructureContractReaderReturnsNoDeepContractBeforeTemplateReaderRequirement(t *testing.T) {
+	reader := NewStructureContractReader(NewMemoryStructureContractStore(), nil)
+
+	_, err := reader.Get(context.Background(), "命令")
+	if !errors.Is(err, ErrNoDeepStructureContract) {
+		t.Fatalf("err = %v, want ErrNoDeepStructureContract before template reader requirement", err)
 	}
 }
 

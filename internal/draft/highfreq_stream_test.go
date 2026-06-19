@@ -276,6 +276,46 @@ func TestHighFreqDraftCancellationEventSurvivesConcurrentBufferDrain(t *testing.
 	}
 }
 
+func TestHighFreqDraftStreamDoesNotAppendCancellationAfterDoneWasDelivered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	upstream := make(chan llm.StreamEvent, 1)
+	upstream <- llm.StreamEvent{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop}
+	events := appendHighFreqStreamMetadata(ctx, upstream, streamMetadataForCancellationTest())
+
+	done, ok := receiveHighFreqStreamEvent(t, events)
+	if !ok {
+		t.Fatal("stream closed before done event")
+	}
+	if done.Type != llm.StreamEventTypeDone || done.FinishReason != llm.FinishReasonStop {
+		t.Fatalf("event = %#v, want done", done)
+	}
+
+	cancel()
+	if got, ok := receiveHighFreqStreamEvent(t, events); ok {
+		t.Fatalf("unexpected event after delivered done and later cancellation: %#v", got)
+	}
+}
+
+func TestHighFreqDraftStreamDoesNotAppendCancellationAfterUpstreamErrorWasDelivered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	upstream := make(chan llm.StreamEvent, 1)
+	upstream <- llm.StreamEvent{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream}
+	events := appendHighFreqStreamMetadata(ctx, upstream, streamMetadataForCancellationTest())
+
+	errEvent, ok := receiveHighFreqStreamEvent(t, events)
+	if !ok {
+		t.Fatal("stream closed before upstream error event")
+	}
+	if errEvent.Type != llm.StreamEventTypeError || errEvent.ErrorReason != llm.ErrorReasonUpstream {
+		t.Fatalf("event = %#v, want upstream error", errEvent)
+	}
+
+	cancel()
+	if got, ok := receiveHighFreqStreamEvent(t, events); ok {
+		t.Fatalf("unexpected event after delivered upstream error and later cancellation: %#v", got)
+	}
+}
+
 func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest(t *testing.T) {
 	completeClient := &recordingCompleteClient{response: llm.ChatResponse{Text: "正文片段", FinishReason: llm.FinishReasonStop}}
 	streamClient := &recordingStreamClient{

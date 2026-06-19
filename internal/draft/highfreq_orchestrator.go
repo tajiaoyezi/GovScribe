@@ -239,8 +239,12 @@ func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.Strea
 				}
 				wrapped := wrapHighFreqStreamEvent(event, metadata, !started)
 				started = true
+				terminal := isTerminalStreamEvent(event)
 				select {
 				case out <- wrapped:
+					if terminal {
+						return
+					}
 				case <-ctx.Done():
 					sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					return

@@ -2,10 +2,12 @@ package draft
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
@@ -33,9 +35,9 @@ func TestHighFreqDraftOrchestratorStreamsC01EventsWithC05MetadataAtHeadAndTail(t
 			{Type: llm.StreamEventTypeDone, FinishReason: llm.FinishReasonStop},
 		},
 	}
-	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{FewShotTopK: 2})
+	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, allowDraftConfig(2))
 
-	result, err := orchestrator.StreamDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.StreamDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability:     doctype.CapabilityC05,
 			Doctype:              "通知",
@@ -91,10 +93,10 @@ func TestHighFreqDraftOrchestratorStreamsC01ErrorEventWithTailMetadata(t *testin
 		singleExampleSearcher(),
 		singleContractReader(t, "通知"),
 		model,
-		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
+		allowDraftConfig(2),
 	)
 
-	result, err := orchestrator.StreamDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.StreamDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC05,
 			Doctype:          "通知",
@@ -152,8 +154,8 @@ func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest
 		singleExampleSearcher(),
 		singleContractReader(t, "通知"),
 		completeClient,
-		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
-	).GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, input)
+		allowDraftConfig(2),
+	).GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), input)
 	if err != nil {
 		t.Fatalf("complete draft: %v", err)
 	}
@@ -161,8 +163,8 @@ func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest
 		singleExampleSearcher(),
 		singleContractReader(t, "通知"),
 		streamClient,
-		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
-	).StreamDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, input)
+		allowDraftConfig(2),
+	).StreamDraft(context.Background(), authorizedDraftPrincipal("u1"), input)
 	if err != nil {
 		t.Fatalf("stream draft: %v", err)
 	}
@@ -219,6 +221,27 @@ func (c *recordingStreamClient) Stream(_ context.Context, req llm.ChatRequest) (
 
 func (c *recordingStreamClient) CurrentNetwork(context.Context) (llm.Network, error) {
 	return llm.NetworkPrivate, nil
+}
+
+func TestHighFreqDraftOrchestratorStreamRequiresDraftCreateAuthorization(t *testing.T) {
+	store := auth.NewMemoryStore()
+	examples := &recordingTemplateExampleSearcher{}
+	model := &recordingStreamClient{}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		examples,
+		&recordingCompleteContractReader{},
+		model,
+		HighFreqDraftOrchestratorConfig{DraftAuthorizer: auth.NewAuthorizer(auth.NewRBACService(store))},
+	)
+	auditor := auth.Principal{UserID: "auditor-1", Roles: []auth.RoleCode{auth.RoleAuditor}, Authenticated: true}
+
+	_, err := orchestrator.StreamDraft(context.Background(), auditor, highFreqDraftInputForRBAC())
+	if !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("err = %v, want auth.ErrUnauthorized", err)
+	}
+	if examples.calls != 0 || model.streamCalls != 0 {
+		t.Fatalf("RBAC denial must stop stream before c03/c01: c03=%d c01=%d", examples.calls, model.streamCalls)
+	}
 }
 
 func collectHighFreqStreamEvents(events <-chan HighFreqDraftStreamEvent) []HighFreqDraftStreamEvent {

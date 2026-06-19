@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
@@ -26,9 +27,9 @@ func TestHighFreqDraftOrchestratorRetrievesBeforeC01GenerationUsingC06Doctype(t 
 		contract: defaultCompleteContractForOrchestratorTest(t, "通知"),
 	}
 	model := &recordingCompleteClient{sequence: &sequence, response: llm.ChatResponse{Text: "生成正文", FinishReason: llm.FinishReasonStop}}
-	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{FewShotTopK: 2})
+	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, allowDraftConfig(2))
 
-	result, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability:     doctype.CapabilityC05,
 			Doctype:              "通知",
@@ -50,6 +51,9 @@ func TestHighFreqDraftOrchestratorRetrievesBeforeC01GenerationUsingC06Doctype(t 
 	}
 	if examples.lastReq.DocumentType != "通知" || examples.lastReq.Intent != "通知各部门召开年度会议" || examples.lastReq.TopK != 2 {
 		t.Fatalf("c03 request = %#v, want c06 doctype/scene/topK", examples.lastReq)
+	}
+	if examples.lastPrincipal.ID != "u1" {
+		t.Fatalf("c03 principal = %#v, want auth principal user id", examples.lastPrincipal)
 	}
 	if contracts.lastDoctype != "通知" {
 		t.Fatalf("contract doctype = %q, want c06 doctype 通知", contracts.lastDoctype)
@@ -77,9 +81,9 @@ func TestHighFreqDraftOrchestratorRejectsNonC05BeforeRetrievalOrGeneration(t *te
 	examples := &recordingTemplateExampleSearcher{}
 	contracts := &recordingCompleteContractReader{}
 	model := &recordingCompleteClient{}
-	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{})
+	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, allowDraftConfig(0))
 
-	_, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	_, err := orchestrator.GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC07,
 			Doctype:          "命令",
@@ -106,9 +110,9 @@ func TestHighFreqDraftOrchestratorCarriesC03InsufficientExamplesIntoPromptMetada
 	}
 	contracts := &recordingCompleteContractReader{sequence: &sequence, contract: defaultCompleteContractForOrchestratorTest(t, "通知")}
 	model := &recordingCompleteClient{sequence: &sequence, response: llm.ChatResponse{Text: "生成正文"}}
-	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{FewShotTopK: 3})
+	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, allowDraftConfig(3))
 
-	result, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC05,
 			Doctype:          "通知",
@@ -132,10 +136,10 @@ func TestHighFreqDraftOrchestratorPromptForbidsLayoutOutput(t *testing.T) {
 		singleExampleSearcher(),
 		singleContractReader(t, "通知"),
 		model,
-		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
+		allowDraftConfig(2),
 	)
 
-	_, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	_, err := orchestrator.GenerateDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC05,
 			Doctype:          "通知",
@@ -152,6 +156,101 @@ func TestHighFreqDraftOrchestratorPromptForbidsLayoutOutput(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("layout exclusion prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestHighFreqDraftOrchestratorRequiresDraftCreateAuthorization(t *testing.T) {
+	store := auth.NewMemoryStore()
+	orchestrator := NewHighFreqDraftOrchestrator(
+		&recordingTemplateExampleSearcher{},
+		&recordingCompleteContractReader{},
+		&recordingCompleteClient{},
+		HighFreqDraftOrchestratorConfig{DraftAuthorizer: auth.NewAuthorizer(auth.NewRBACService(store))},
+	)
+	auditor := auth.Principal{UserID: "auditor-1", Roles: []auth.RoleCode{auth.RoleAuditor}, Authenticated: true}
+
+	_, err := orchestrator.GenerateDraft(context.Background(), auditor, highFreqDraftInputForRBAC())
+	if !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("err = %v, want auth.ErrUnauthorized", err)
+	}
+}
+
+func TestHighFreqDraftOrchestratorAllowsDraftCreateAuthorizedPrincipal(t *testing.T) {
+	store := auth.NewMemoryStore()
+	examples := singleExampleSearcher()
+	model := &recordingCompleteClient{response: llm.ChatResponse{Text: "生成正文"}}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		examples,
+		singleContractReader(t, "通知"),
+		model,
+		HighFreqDraftOrchestratorConfig{DraftAuthorizer: auth.NewAuthorizer(auth.NewRBACService(store)), FewShotTopK: 2},
+	)
+	secretary := auth.Principal{UserID: "sec-1", Roles: []auth.RoleCode{auth.RoleSecretary}, Authenticated: true}
+
+	if _, err := orchestrator.GenerateDraft(context.Background(), secretary, highFreqDraftInputForRBAC()); err != nil {
+		t.Fatalf("authorized draft create failed: %v", err)
+	}
+	if examples.calls != 1 || model.completeCalls != 1 {
+		t.Fatalf("authorized principal should reach c03 and c01: c03=%d c01=%d", examples.calls, model.completeCalls)
+	}
+}
+
+func TestHighFreqDraftOrchestratorKeepsRBACAndC03DataACLLayersIndependent(t *testing.T) {
+	store := auth.NewMemoryStore()
+	dataACLErr := errors.New("c03 data acl denied")
+
+	t.Run("rbac allowed still stops when c03 data acl denies", func(t *testing.T) {
+		examples := singleExampleSearcher()
+		examples.err = dataACLErr
+		model := &recordingCompleteClient{}
+		orchestrator := NewHighFreqDraftOrchestrator(
+			examples,
+			singleContractReader(t, "通知"),
+			model,
+			HighFreqDraftOrchestratorConfig{DraftAuthorizer: auth.NewAuthorizer(auth.NewRBACService(store)), FewShotTopK: 2},
+		)
+		secretary := auth.Principal{UserID: "sec-1", Roles: []auth.RoleCode{auth.RoleSecretary}, Authenticated: true}
+
+		_, err := orchestrator.GenerateDraft(context.Background(), secretary, highFreqDraftInputForRBAC())
+		if !errors.Is(err, dataACLErr) {
+			t.Fatalf("err = %v, want c03 data ACL error", err)
+		}
+		if model.completeCalls != 0 {
+			t.Fatalf("data ACL denial must stop before c01, calls=%d", model.completeCalls)
+		}
+	})
+
+	t.Run("c03 would allow but rbac denied stops before retrieval", func(t *testing.T) {
+		examples := singleExampleSearcher()
+		model := &recordingCompleteClient{}
+		orchestrator := NewHighFreqDraftOrchestrator(
+			examples,
+			singleContractReader(t, "通知"),
+			model,
+			HighFreqDraftOrchestratorConfig{DraftAuthorizer: auth.NewAuthorizer(auth.NewRBACService(store)), FewShotTopK: 2},
+		)
+		auditor := auth.Principal{UserID: "auditor-1", Roles: []auth.RoleCode{auth.RoleAuditor}, Authenticated: true}
+
+		_, err := orchestrator.GenerateDraft(context.Background(), auditor, highFreqDraftInputForRBAC())
+		if !errors.Is(err, auth.ErrUnauthorized) {
+			t.Fatalf("err = %v, want auth.ErrUnauthorized", err)
+		}
+		if examples.calls != 0 || model.completeCalls != 0 {
+			t.Fatalf("RBAC denial must stop before c03/c01: c03=%d c01=%d", examples.calls, model.completeCalls)
+		}
+	})
+}
+
+func highFreqDraftInputForRBAC() HighFreqDraftRequestInput {
+	return HighFreqDraftRequestInput{
+		Scenario: doctype.ScenarioContext{
+			TargetCapability: doctype.CapabilityC05,
+			Doctype:          "通知",
+			Subtype:          "召开会议",
+			SceneDescription: "通知各部门召开年度会议",
+		},
+		ActorID:   "actor-1",
+		RequestID: "req-1",
 	}
 }
 
@@ -173,15 +272,17 @@ func defaultCompleteContractForOrchestratorTest(t *testing.T, doctypeName string
 }
 
 type recordingTemplateExampleSearcher struct {
-	sequence *[]string
-	calls    int
-	lastReq  retrievalcontract.TemplateExampleRequest
-	result   retrievalcontract.TemplateExampleResult
-	err      error
+	sequence      *[]string
+	calls         int
+	lastPrincipal retrievalcontract.Principal
+	lastReq       retrievalcontract.TemplateExampleRequest
+	result        retrievalcontract.TemplateExampleResult
+	err           error
 }
 
-func (s *recordingTemplateExampleSearcher) SearchExamples(_ context.Context, _ retrievalcontract.Principal, req retrievalcontract.TemplateExampleRequest) (retrievalcontract.TemplateExampleResult, error) {
+func (s *recordingTemplateExampleSearcher) SearchExamples(_ context.Context, principal retrievalcontract.Principal, req retrievalcontract.TemplateExampleRequest) (retrievalcontract.TemplateExampleResult, error) {
 	s.calls++
+	s.lastPrincipal = principal
 	s.lastReq = req
 	if s.sequence != nil {
 		*s.sequence = append(*s.sequence, "c03")
@@ -229,4 +330,18 @@ func (c *recordingCompleteClient) Stream(context.Context, llm.ChatRequest) (<-ch
 
 func (c *recordingCompleteClient) CurrentNetwork(context.Context) (llm.Network, error) {
 	return llm.NetworkPrivate, nil
+}
+
+func authorizedDraftPrincipal(id string) auth.Principal {
+	return auth.Principal{UserID: id, Roles: []auth.RoleCode{auth.RoleSecretary}, Authenticated: true}
+}
+
+func allowDraftConfig(topK int) HighFreqDraftOrchestratorConfig {
+	return HighFreqDraftOrchestratorConfig{FewShotTopK: topK, DraftAuthorizer: allowDraftAuthorizer{}}
+}
+
+type allowDraftAuthorizer struct{}
+
+func (allowDraftAuthorizer) Authorize(context.Context, auth.Principal, auth.Permission) error {
+	return nil
 }

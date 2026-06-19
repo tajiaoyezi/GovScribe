@@ -119,6 +119,7 @@ func TestHighFreqDraftContractDoesNotCarryClassificationOrLayoutFields(t *testin
 		reflect.TypeOf(HighFreqDraftRequest{}),
 		reflect.TypeOf(HighFreqDraftResponse{}),
 		reflect.TypeOf(HighFreqDraftResponseContext{}),
+		reflect.TypeOf(StructuredDraftBody{}),
 	} {
 		for _, forbidden := range []string{"Tier", "IsStarredRare", "CapabilityTier", "FallbackDecision", "FontSize", "RedHead", "GBT9704"} {
 			if _, ok := typ.FieldByName(forbidden); ok {

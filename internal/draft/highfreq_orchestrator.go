@@ -166,7 +166,7 @@ func (o *HighFreqDraftOrchestrator) prepareGeneration(ctx context.Context, princ
 		Messages: []llm.Message{
 			{
 				Role:    llm.RoleSystem,
-				Content: "你是 GovScribe 高频文种初稿生成编排层。文种、子类、行文方向以 c06 上下文为准；仅输出规范正文初稿；不得改判文种、不得复算能力档、不得编造缺失要素。",
+				Content: "你是 GovScribe 高频文种初稿生成编排层。文种、子类、行文方向以 c06 上下文为准；仅输出规范正文初稿；不得输出 GB/T 9704 版式、红头、字体字号等排版结果；不得改判文种、不得复算能力档、不得编造缺失要素。",
 			},
 			{Role: llm.RoleUser, Content: prompt},
 		},

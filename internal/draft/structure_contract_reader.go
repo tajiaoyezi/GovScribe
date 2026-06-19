@@ -3,8 +3,23 @@ package draft
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 )
+
+var ErrNoDeepStructureContract = errors.New("no deep structure contract")
+
+type NoDeepStructureContractError struct {
+	Doctype string
+}
+
+func (e NoDeepStructureContractError) Error() string {
+	return fmt.Sprintf("no deep structure contract for doctype %q", e.Doctype)
+}
+
+func (e NoDeepStructureContractError) Is(target error) bool {
+	return target == ErrNoDeepStructureContract
+}
 
 type CompleteStructureContract struct {
 	StructureContract
@@ -24,12 +39,15 @@ func (r *StructureContractReader) Get(ctx context.Context, doctypeName string) (
 	if r == nil || r.contracts == nil {
 		return CompleteStructureContract{}, errors.New("structure contract store is required")
 	}
-	if r.templates == nil {
-		return CompleteStructureContract{}, errors.New("prompt template object reader is required")
-	}
 	contract, err := r.contracts.Get(ctx, doctypeName)
+	if errors.Is(err, ErrStructureContractNotFound) {
+		return CompleteStructureContract{}, NoDeepStructureContractError{Doctype: strings.TrimSpace(doctypeName)}
+	}
 	if err != nil {
 		return CompleteStructureContract{}, err
+	}
+	if r.templates == nil {
+		return CompleteStructureContract{}, errors.New("prompt template object reader is required")
 	}
 	if strings.TrimSpace(contract.TemplateObjectKey) == "" || strings.TrimSpace(contract.TemplateVersion) == "" {
 		return CompleteStructureContract{}, ErrPromptTemplateNotFound

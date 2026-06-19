@@ -310,6 +310,10 @@ func DefaultStructureContracts() []StructureContract {
 			RedlineRules:   redlines,
 		},
 	}
+	for i := range contracts {
+		contracts[i].TemplateObjectKey = mustPromptTemplateObjectKey(contracts[i].Doctype, DefaultPromptTemplateVersion)
+		contracts[i].TemplateVersion = DefaultPromptTemplateVersion
+	}
 	out := make([]StructureContract, len(contracts))
 	for i, c := range contracts {
 		out[i] = copyStructureContract(c)

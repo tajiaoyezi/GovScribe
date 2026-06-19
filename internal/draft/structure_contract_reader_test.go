@@ -2,6 +2,7 @@ package draft
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,6 +78,34 @@ func TestStructureContractReaderUsesStoredTemplateObjectKey(t *testing.T) {
 	}
 }
 
+func TestStructureContractReaderReturnsNoDeepContractForNonHighFrequencyDoctype(t *testing.T) {
+	ctx := context.Background()
+	templates := &countingPromptTemplateReader{}
+	reader := NewStructureContractReader(NewMemoryStructureContractStore(), templates)
+
+	_, err := reader.Get(ctx, "命令")
+	if err == nil {
+		t.Fatal("get non-high-frequency doctype err = nil, want no deep contract error")
+	}
+	if !errors.Is(err, ErrNoDeepStructureContract) {
+		t.Fatalf("err = %v, want ErrNoDeepStructureContract", err)
+	}
+	var noDeep NoDeepStructureContractError
+	if !errors.As(err, &noDeep) {
+		t.Fatalf("err = %T %v, want NoDeepStructureContractError", err, err)
+	}
+	if noDeep.Doctype != "命令" {
+		t.Fatalf("doctype in error = %q, want 命令", noDeep.Doctype)
+	}
+	if templates.calls != 0 {
+		t.Fatalf("template reader calls = %d, want 0 for non-high-frequency doctype", templates.calls)
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "c07") || strings.Contains(message, "fallback") || strings.Contains(message, "移交") {
+		t.Fatalf("no deep contract error must not decide fallback/c07 transfer: %q", err.Error())
+	}
+}
+
 func containsRequiredSlot(slots []doctype.RequiredSlot, want doctype.RequiredSlot) bool {
 	for _, slot := range slots {
 		if slot == want {
@@ -104,4 +133,13 @@ func (s staticStructureContractStore) List(context.Context) ([]StructureContract
 		out = append(out, copyStructureContract(contract))
 	}
 	return out, nil
+}
+
+type countingPromptTemplateReader struct {
+	calls int
+}
+
+func (r *countingPromptTemplateReader) GetTemplate(context.Context, string) ([]byte, error) {
+	r.calls++
+	return nil, ErrPromptTemplateNotFound
 }

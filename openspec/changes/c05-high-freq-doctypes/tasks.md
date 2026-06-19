@@ -1,8 +1,8 @@
 ## 1. 前置盘点与配置数据落库
 
 - [ ] 1.1 开工前按 9 个高频文种盘点客户存量范文数量（对照 <100 条稀缺线，每文种宜 ≥100 篇），登记到位时间与清洗 / 脱敏入库责任方，产出"哪些文种样本充足、哪些不足"的盘点结论作为灰度放开顺序输入（对齐 PRD Risks「范文库数据不足」）；文种 / 子类的能力档与是否标黄分级判定属 c06，本盘点仅供 c06 与灰度参考、不在 c05 落分级配置；验证：每个文种有明确的"样本是否充足"标注，作为后续灰度放开顺序输入。
-- [ ] 1.2 在 PostgreSQL 设计文种结构契约配置表：承载 9 个高频文种的"行文关系（上行 / 下行 / 平行）→ 必备要素清单"等结构契约标量字段（对齐 design D-1、ADR-0001 D5）；不承载文种 / 子类能力档分级与是否标黄稀缺（属 c06 文种能力档分级表，c06 权威）；验证：表结构能表达任一高频文种的行文关系与必备要素清单，可被 SQL 查询，且不含能力档 / 标黄字段。
-- [ ] 1.3 为 9 个高频文种初始化结构契约配置：标注每个文种行文关系（请示 / 报告上行、通知 / 通报 / 批复下行、函平行）与必备要素清单；文种 / 子类的能力档分级与标黄标记不在本 change 初始化（属 c06）；验证：抽查 9 文种行文关系与必备要素清单与 PRD「文种覆盖矩阵 A」结构口径一致，表内无能力档 / 标黄分级配置。
+- [x] 1.2 在 PostgreSQL 设计文种结构契约配置表：承载 9 个高频文种的"行文关系（上行 / 下行 / 平行）→ 必备要素清单"等结构契约标量字段（对齐 design D-1、ADR-0001 D5）；不承载文种 / 子类能力档分级与是否标黄稀缺（属 c06 文种能力档分级表，c06 权威）；验证：表结构能表达任一高频文种的行文关系与必备要素清单，可被 SQL 查询，且不含能力档 / 标黄字段。（实现：`backend/migrations/000007_high_freq_doctype_contracts.sql` 新增 `high_freq_doctype_structure_contracts`，字段覆盖文种、行文方向、标题 / 称谓 / 主送 / 正文结构 / 必备要素 / 结尾 / 落款 / 口吻 / 红线及模板引用；不包含 `capability_tier`、`is_starred_rare`、`target_capability` 等 c06 分级字段。对应 `TestMigrationDefinesHighFreqStructureContractsWithoutC06ClassificationFields`。）
+- [x] 1.3 为 9 个高频文种初始化结构契约配置：标注每个文种行文关系（请示 / 报告上行、通知 / 通报 / 批复下行、函平行）与必备要素清单；文种 / 子类的能力档分级与标黄标记不在本 change 初始化（属 c06）；验证：抽查 9 文种行文关系与必备要素清单与 PRD「文种覆盖矩阵 A」结构口径一致，表内无能力档 / 标黄分级配置。（实现：`internal/draft/structure_contract.go` 提供 `DefaultStructureContracts` 覆盖 9 个高频文种，行文关系按 c05 口径初始化，必备要素复用 c06 `DefaultRequiredSlots` 作为要素名称来源；`SeedStructureContracts` 幂等写入 PostgreSQL 且不写入 c06 分级字段。对应 `TestDefaultStructureContractsCoverNineHighFreqDoctypes` / `TestSeedStructureContractsInsertsWithoutClassificationFields`。）
 - [ ] 1.4 将 9 个文种的提示模板文本（标题构成 / 称谓 / 主送 / 正文段落结构与必备要素 / 落款 / 口吻指令 / few-shot 框架文本 / 机关口径红线指令）入 MinIO 业务桶并记版本，与 1.2 标量配置分层存放（对齐 design D-1）；验证：按文种标识 + 版本可从 MinIO 取到对应模板文本，措辞调整改对象不改代码、无需重发版。
 
 ## 2. 文种结构契约库（doctype-prompt-templating）

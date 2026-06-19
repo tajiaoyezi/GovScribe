@@ -79,6 +79,54 @@ func TestHighFreqDraftOrchestratorStreamsC01EventsWithC05MetadataAtHeadAndTail(t
 	}
 }
 
+func TestHighFreqDraftOrchestratorStreamsC01ErrorEventWithTailMetadata(t *testing.T) {
+	model := &recordingStreamClient{
+		streamEvents: []llm.StreamEvent{
+			{Type: llm.StreamEventTypeDelta, Delta: "半截"},
+			{Type: llm.StreamEventTypeDelta, Delta: "正文"},
+			{Type: llm.StreamEventTypeError, ErrorReason: llm.ErrorReasonUpstream},
+		},
+	}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		singleExampleSearcher(),
+		singleContractReader(t, "通知"),
+		model,
+		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
+	)
+
+	result, err := orchestrator.StreamDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+		Scenario: doctype.ScenarioContext{
+			TargetCapability: doctype.CapabilityC05,
+			Doctype:          "通知",
+			Subtype:          "召开会议",
+			Direction:        doctype.DirectionDownward,
+			SceneDescription: "通知各部门召开年度会议",
+		},
+		ActorID:   "actor-1",
+		RequestID: "req-1",
+	})
+	if err != nil {
+		t.Fatalf("stream draft: %v", err)
+	}
+
+	events := collectHighFreqStreamEvents(result.Events)
+	if got := joinedHighFreqDeltas(events); got != "半截正文" {
+		t.Fatalf("joined stream text = %q, want 半截正文", got)
+	}
+	if events[2].Type != llm.StreamEventTypeError || events[2].ErrorReason != llm.ErrorReasonUpstream {
+		t.Fatalf("tail event = %#v, want original c01 error event", events[2])
+	}
+	if events[0].Metadata == nil || events[2].Metadata == nil {
+		t.Fatalf("head/error tail metadata must be present: %#v", events)
+	}
+	if events[1].Metadata != nil {
+		t.Fatalf("middle delta must not carry c05 metadata: %#v", events[1].Metadata)
+	}
+	if events[2].Metadata.Doctype != "通知" || events[2].Metadata.Subtype != "召开会议" || events[2].Metadata.RequestID != "req-1" {
+		t.Fatalf("error tail metadata = %#v, want consumed c06 context identifiers", events[2].Metadata)
+	}
+}
+
 func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest(t *testing.T) {
 	completeClient := &recordingCompleteClient{response: llm.ChatResponse{Text: "正文片段", FinishReason: llm.FinishReasonStop}}
 	streamClient := &recordingStreamClient{
@@ -123,8 +171,8 @@ func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest
 	if got := joinedHighFreqDeltas(streamEvents); got != completeResult.ModelResponse.Text {
 		t.Fatalf("stream joined text = %q, want complete text %q", got, completeResult.ModelResponse.Text)
 	}
-	if !reflect.DeepEqual(streamClient.lastStreamReq.Messages, completeClient.lastReq.Messages) {
-		t.Fatalf("stream and complete must use the same prompt\nstream=%#v\ncomplete=%#v", streamClient.lastStreamReq.Messages, completeClient.lastReq.Messages)
+	if !reflect.DeepEqual(streamClient.lastStreamReq, completeClient.lastReq) {
+		t.Fatalf("stream and complete must use the same c01 request\nstream=%#v\ncomplete=%#v", streamClient.lastStreamReq, completeClient.lastReq)
 	}
 }
 

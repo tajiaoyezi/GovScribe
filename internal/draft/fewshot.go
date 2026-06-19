@@ -20,6 +20,7 @@ type FewShotInput struct {
 	MissingSlots              []doctype.RequiredSlot
 	MaxExamples               int
 	MinimumSufficientExamples int
+	C03InsufficientExamples   bool
 	StructureContract         StructureContract
 	C03RetrievedExamples      []retrieval.TemplateExample
 }
@@ -49,7 +50,7 @@ func AssembleFewShotPrompt(input FewShotInput) (FewShotPrompt, error) {
 		ExampleCount:              len(examples),
 		MinimumSufficientExamples: input.MinimumSufficientExamples,
 	}
-	if input.MinimumSufficientExamples > 0 && len(examples) < input.MinimumSufficientExamples {
+	if input.C03InsufficientExamples || (input.MinimumSufficientExamples > 0 && len(examples) < input.MinimumSufficientExamples) {
 		metadata.InsufficientExamples = true
 		metadata.Warning = InsufficientFewShotWarning
 	}

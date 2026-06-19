@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 )
@@ -115,7 +116,7 @@ func TestBuildGenerationRequestRejectsUnsupportedCapability(t *testing.T) {
 	}
 }
 
-func TestStreamDraftCallsC01ClientWithC06SecurityLevel(t *testing.T) {
+func TestStreamDraftRejectsC05BeforeC01BecauseRBACRequiresHighFreqOrchestrator(t *testing.T) {
 	client := &captureClient{}
 	scenario := doctype.ScenarioContext{
 		TargetCapability:     doctype.CapabilityC05,
@@ -127,12 +128,35 @@ func TestStreamDraftCallsC01ClientWithC06SecurityLevel(t *testing.T) {
 	}
 
 	events, branch, err := StreamDraft(context.Background(), client, GenerationInput{Scenario: scenario})
+	if !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("err = %v, want auth.ErrUnauthorized", err)
+	}
+	if events != nil || branch != "" {
+		t.Fatalf("events/branch = %#v/%q, want nil/empty for rejected c05 stream", events, branch)
+	}
+	if client.calls != 0 {
+		t.Fatalf("c05 must be rejected before c01 call, calls = %d", client.calls)
+	}
+}
+
+func TestStreamDraftCallsC01ClientWithC06SecurityLevelForC07(t *testing.T) {
+	client := &captureClient{}
+	scenario := doctype.ScenarioContext{
+		TargetCapability:     doctype.CapabilityC07,
+		Doctype:              "命令",
+		Subtype:              "任免令",
+		Direction:            doctype.DirectionDownward,
+		SceneDescription:     "发布一则任免某同志职务的命令",
+		ContentSecurityLevel: llm.ContentSecurityLevelSensitive,
+	}
+
+	events, branch, err := StreamDraft(context.Background(), client, GenerationInput{Scenario: scenario})
 	if err != nil {
 		t.Fatalf("StreamDraft failed: %v", err)
 	}
 	event := <-events
-	if event.Type != llm.StreamEventTypeDone || branch != BranchDeepDoctype {
-		t.Fatalf("event/branch = %#v/%q, want done/deep", event, branch)
+	if event.Type != llm.StreamEventTypeDone || branch != BranchGenericFallback {
+		t.Fatalf("event/branch = %#v/%q, want done/generic fallback", event, branch)
 	}
 	if client.calls != 1 {
 		t.Fatalf("client calls = %d, want 1", client.calls)

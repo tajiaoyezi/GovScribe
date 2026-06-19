@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
 	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 )
@@ -16,16 +17,22 @@ type CompleteStructureContractReader interface {
 	Get(context.Context, string) (CompleteStructureContract, error)
 }
 
+type DraftCreateAuthorizer interface {
+	Authorize(context.Context, auth.Principal, auth.Permission) error
+}
+
 type HighFreqDraftOrchestratorConfig struct {
 	FewShotTopK               int
 	MinimumSufficientExamples int
+	DraftAuthorizer           DraftCreateAuthorizer
 }
 
 type HighFreqDraftOrchestrator struct {
-	examples  TemplateExampleSearcher
-	contracts CompleteStructureContractReader
-	model     llm.Client
-	config    HighFreqDraftOrchestratorConfig
+	examples        TemplateExampleSearcher
+	contracts       CompleteStructureContractReader
+	model           llm.Client
+	config          HighFreqDraftOrchestratorConfig
+	draftAuthorizer DraftCreateAuthorizer
 }
 
 type HighFreqDraftGenerationResult struct {
@@ -69,14 +76,15 @@ func NewHighFreqDraftOrchestrator(
 	config HighFreqDraftOrchestratorConfig,
 ) *HighFreqDraftOrchestrator {
 	return &HighFreqDraftOrchestrator{
-		examples:  examples,
-		contracts: contracts,
-		model:     model,
-		config:    config,
+		examples:        examples,
+		contracts:       contracts,
+		model:           model,
+		config:          config,
+		draftAuthorizer: config.DraftAuthorizer,
 	}
 }
 
-func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal retrievalcontract.Principal, input HighFreqDraftRequestInput) (HighFreqDraftGenerationResult, error) {
+func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal auth.Principal, input HighFreqDraftRequestInput) (HighFreqDraftGenerationResult, error) {
 	plan, err := o.prepareGeneration(ctx, principal, input)
 	if err != nil {
 		return HighFreqDraftGenerationResult{}, err
@@ -94,7 +102,7 @@ func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal
 	}, nil
 }
 
-func (o *HighFreqDraftOrchestrator) StreamDraft(ctx context.Context, principal retrievalcontract.Principal, input HighFreqDraftRequestInput) (HighFreqDraftStreamResult, error) {
+func (o *HighFreqDraftOrchestrator) StreamDraft(ctx context.Context, principal auth.Principal, input HighFreqDraftRequestInput) (HighFreqDraftStreamResult, error) {
 	plan, err := o.prepareGeneration(ctx, principal, input)
 	if err != nil {
 		return HighFreqDraftStreamResult{}, err
@@ -112,9 +120,12 @@ func (o *HighFreqDraftOrchestrator) StreamDraft(ctx context.Context, principal r
 	}, nil
 }
 
-func (o *HighFreqDraftOrchestrator) prepareGeneration(ctx context.Context, principal retrievalcontract.Principal, input HighFreqDraftRequestInput) (highFreqDraftGenerationPlan, error) {
+func (o *HighFreqDraftOrchestrator) prepareGeneration(ctx context.Context, principal auth.Principal, input HighFreqDraftRequestInput) (highFreqDraftGenerationPlan, error) {
 	if o == nil {
 		return highFreqDraftGenerationPlan{}, errors.New("high frequency draft orchestrator is required")
+	}
+	if err := o.authorizeDraftCreate(ctx, principal); err != nil {
+		return highFreqDraftGenerationPlan{}, err
 	}
 	request, err := NewHighFreqDraftRequest(input)
 	if err != nil {
@@ -134,7 +145,7 @@ func (o *HighFreqDraftOrchestrator) prepareGeneration(ctx context.Context, princ
 	if topK <= 0 {
 		topK = DefaultFewShotTopK
 	}
-	c03Result, err := o.examples.SearchExamples(ctx, principal, retrievalcontract.TemplateExampleRequest{
+	c03Result, err := o.examples.SearchExamples(ctx, retrievalPrincipal(principal), retrievalcontract.TemplateExampleRequest{
 		Intent:       request.Context.SceneDescription,
 		DocumentType: request.Context.Doctype,
 		TopK:         topK,
@@ -180,6 +191,17 @@ func (o *HighFreqDraftOrchestrator) prepareGeneration(ctx context.Context, princ
 		Prompt:       prompt,
 		ModelRequest: modelReq,
 	}, nil
+}
+
+func (o *HighFreqDraftOrchestrator) authorizeDraftCreate(ctx context.Context, principal auth.Principal) error {
+	if o.draftAuthorizer == nil {
+		return auth.ErrUnauthorized
+	}
+	return o.draftAuthorizer.Authorize(ctx, principal, auth.PermissionDraftCreate)
+}
+
+func retrievalPrincipal(principal auth.Principal) retrievalcontract.Principal {
+	return retrievalcontract.Principal{ID: principal.UserID}
 }
 
 func highFreqStreamMetadata(request HighFreqDraftRequest, fewShot FewShotPrompt) HighFreqDraftStreamMetadata {

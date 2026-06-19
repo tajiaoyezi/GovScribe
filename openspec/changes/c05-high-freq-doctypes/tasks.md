@@ -14,7 +14,7 @@
 
 ## 3. 范文样例编排与降级口径
 
-- [ ] 3.1 实现 few-shot 样例编排契约：样例仅取自 c03（corpus-rag-retrieval）检索接口返回结果，以 few-shot 形式注入、与待写场景要素分区呈现、设注入条数上限（TopK，具体值待 6.x 实测校准）、样例与目标文种 / 子类一致性取用规则（对齐 spec「范文样例编排进提示的契约」、design D-4）；验证：c03 返回若干样例时按契约分区注入且不超上限。
+- [x] 3.1 实现 few-shot 样例编排契约：样例仅取自 c03（corpus-rag-retrieval）检索接口返回结果，以 few-shot 形式注入、与待写场景要素分区呈现、设注入条数上限（TopK，具体值待 6.x 实测校准）、样例与目标文种 / 子类一致性取用规则（对齐 spec「范文样例编排进提示的契约」、design D-4）；验证：c03 返回若干样例时按契约分区注入且不超上限。（实现：`internal/draft/fewshot.go` 新增 `FewShotInput` / `AssembleFewShotPrompt`，输入只接收 c03 `retrieval.TemplateExample`，按目标文种过滤、按 `MaxExamples` TopK 上限截断，并将待写场景要素与 `## Few-shot 范文样例` 分区输出；提示文本显式标注来源为 c03 `corpus-rag-retrieval`、同文种 / 优先同子类取用规则、TopK 上限。`internal/draft/prompt_template.go` 的模板框架同步写入同文种 / 同子类一致性规则。对应 `TestAssembleFewShotPromptPartitionsC03ExamplesAndScenario` / `TestDefaultPromptTemplateObjectsCoverNineDoctypesAndSections`。）
 - [ ] 3.2 实现"不臆造、不改写范文"约束：编排层只使用 c03 返回的脱敏后样例文本，不从其它来源臆造范文、不还原 / 修改 c03 样例内容（对齐 spec 同名 Scenario、design D-4、ADR-0001 D7 脱敏红线）；验证：对编排路径断言除 c03 接口外无其它范文文本来源，且样例文本逐字透传不被改写。
 - [ ] 3.3 实现范文不足降级口径：深做文种样例数量低于充足阈值时仍按结构契约拼装提示（不退回无契约通用生成），并在生成元数据标记"范文样例不足、质量可能下降"；深做文种零样例时仍施加结构契约约束、不在无标记情况下退回无文种结构约束输出（对齐 spec「范文不足时的降级口径」、design Risks「范文库数据不足」）；验证：构造零样例 / 少样例两种输入，断言均带结构契约且元数据含样例不足标记。
 

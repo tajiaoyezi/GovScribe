@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
-	"github.com/tajiaoyezi/GovScribe/internal/rag/retrieval"
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 )
 
 const DefaultFewShotTopK = 3
@@ -22,7 +22,7 @@ type FewShotInput struct {
 	MinimumSufficientExamples int
 	C03InsufficientExamples   bool
 	StructureContract         StructureContract
-	C03RetrievedExamples      []retrieval.TemplateExample
+	C03RetrievedExamples      []retrievalcontract.TemplateExample
 }
 
 type FewShotMetadata struct {
@@ -35,7 +35,7 @@ type FewShotMetadata struct {
 
 type FewShotPrompt struct {
 	Content  string
-	Examples []retrieval.TemplateExample
+	Examples []retrievalcontract.TemplateExample
 	Metadata FewShotMetadata
 }
 
@@ -101,9 +101,9 @@ func AssembleFewShotPrompt(input FewShotInput) (FewShotPrompt, error) {
 	return FewShotPrompt{Content: b.String(), Examples: examples, Metadata: metadata}, nil
 }
 
-func selectFewShotExamples(examples []retrieval.TemplateExample, doctypeName string, topK int) []retrieval.TemplateExample {
+func selectFewShotExamples(examples []retrievalcontract.TemplateExample, doctypeName string, topK int) []retrievalcontract.TemplateExample {
 	targetDoctype := strings.TrimSpace(doctypeName)
-	out := make([]retrieval.TemplateExample, 0, min(topK, len(examples)))
+	out := make([]retrievalcontract.TemplateExample, 0, min(topK, len(examples)))
 	for _, example := range examples {
 		if len(out) >= topK {
 			break

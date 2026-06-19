@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 	"github.com/tajiaoyezi/GovScribe/internal/rag/vector"
 )
 
@@ -12,9 +13,7 @@ type Permission string
 
 const PermissionTemplateSearch Permission = "template.search"
 
-type Principal struct {
-	ID string
-}
+type Principal = retrievalcontract.Principal
 
 type Authorizer interface {
 	Authorize(context.Context, Principal, Permission) error

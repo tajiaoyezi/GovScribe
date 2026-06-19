@@ -1,28 +1,14 @@
 package retrieval
 
-import "context"
+import (
+	"context"
 
-type TemplateExampleRequest struct {
-	Intent       string
-	DocumentType string
-	TopK         int
-}
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
+)
 
-type TemplateExampleResult struct {
-	Examples             []TemplateExample
-	RerankDegraded       bool
-	InsufficientExamples bool
-}
-
-type TemplateExample struct {
-	ChunkID          string
-	DocumentID       string
-	Text             string
-	DocumentType     string
-	DocumentNumber   string
-	OrganizationName string
-	Score            float64
-}
+type TemplateExampleRequest = retrievalcontract.TemplateExampleRequest
+type TemplateExampleResult = retrievalcontract.TemplateExampleResult
+type TemplateExample = retrievalcontract.TemplateExample
 
 type TemplateExampleAPI struct {
 	service *Service

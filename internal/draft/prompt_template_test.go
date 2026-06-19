@@ -52,6 +52,9 @@ func TestDefaultPromptTemplateObjectsCoverNineDoctypesAndSections(t *testing.T) 
 	if !strings.Contains(byDoctype["请示"].Content, "妥否，请批示。") {
 		t.Fatalf("请示 template should carry upward closing rule:\n%s", byDoctype["请示"].Content)
 	}
+	if !strings.Contains(byDoctype["通知"].Content, "同文种") || !strings.Contains(byDoctype["通知"].Content, "同子类") {
+		t.Fatalf("few-shot section should carry doctype/subtype consistency rule:\n%s", byDoctype["通知"].Content)
+	}
 }
 
 func TestDefaultStructureContractsReferencePromptTemplateObjects(t *testing.T) {

@@ -117,7 +117,7 @@ func BuildPromptTemplateContent(contract StructureContract) string {
 	}
 	b.WriteString("\n")
 	b.WriteString("## Few-shot 样例编排\n")
-	b.WriteString("- 仅使用 c03 检索接口返回的同文种脱敏范文样例。\n")
+	b.WriteString("- 仅使用 c03 检索接口返回的同文种脱敏范文样例；存在子类元数据时优先使用同子类样例。\n")
 	b.WriteString("- 样例与待写场景要素分区呈现，样例不得被臆造、还原或改写。\n")
 	b.WriteString("- 注入条数不得超过调用方按契约设定的 TopK 上限。\n\n")
 	b.WriteString("## 机关口径红线\n")

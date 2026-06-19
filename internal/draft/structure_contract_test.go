@@ -3,6 +3,7 @@ package draft
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -54,6 +55,71 @@ func TestDefaultStructureContractsCoverNineHighFreqDoctypes(t *testing.T) {
 	}
 	if byDoctype["函"].Direction != doctype.DirectionHorizontal {
 		t.Fatalf("函 direction = %q, want horizontal", byDoctype["函"].Direction)
+	}
+}
+
+func TestDefaultStructureContractsCarryDirectionToneRules(t *testing.T) {
+	byDoctype := map[string]StructureContract{}
+	for _, contract := range DefaultStructureContracts() {
+		byDoctype[contract.Doctype] = contract
+	}
+
+	upward := []struct {
+		doctype        string
+		toneKeyword    string
+		closingKeyword string
+	}{
+		{doctype: "请示", toneKeyword: "呈请", closingKeyword: "请批示"},
+		{doctype: "报告", toneKeyword: "报告", closingKeyword: "报告"},
+	}
+	for _, tc := range upward {
+		contract := byDoctype[tc.doctype]
+		if contract.Direction != doctype.DirectionUpward {
+			t.Errorf("%s direction = %q, want upward", tc.doctype, contract.Direction)
+		}
+		if !textSliceContains(contract.ToneRules, tc.toneKeyword) {
+			t.Errorf("%s tone rules = %#v, want keyword %q", tc.doctype, contract.ToneRules, tc.toneKeyword)
+		}
+		if !strings.Contains(contract.ClosingRule, tc.closingKeyword) {
+			t.Errorf("%s closing rule = %q, want keyword %q", tc.doctype, contract.ClosingRule, tc.closingKeyword)
+		}
+	}
+
+	downward := []struct {
+		doctype     string
+		toneKeyword string
+	}{
+		{doctype: "通知", toneKeyword: "部署"},
+		{doctype: "通报", toneKeyword: "告知"},
+		{doctype: "批复", toneKeyword: "告知"},
+	}
+	for _, tc := range downward {
+		contract := byDoctype[tc.doctype]
+		if contract.Direction != doctype.DirectionDownward {
+			t.Errorf("%s direction = %q, want downward", tc.doctype, contract.Direction)
+		}
+		if !textSliceContains(contract.ToneRules, tc.toneKeyword) {
+			t.Errorf("%s tone rules = %#v, want keyword %q", tc.doctype, contract.ToneRules, tc.toneKeyword)
+		}
+	}
+
+	letter := byDoctype["函"]
+	if letter.Direction != doctype.DirectionHorizontal {
+		t.Errorf("函 direction = %q, want horizontal", letter.Direction)
+	}
+	for _, keyword := range []string{"商洽", "询问"} {
+		if !textSliceContains(letter.ToneRules, keyword) {
+			t.Errorf("函 tone rules = %#v, want keyword %q", letter.ToneRules, keyword)
+		}
+	}
+
+	request := byDoctype["请示"]
+	notice := byDoctype["通知"]
+	if strings.Join(request.ToneRules, "\x00") == strings.Join(notice.ToneRules, "\x00") {
+		t.Fatal("请示 and 通知 share the same tone rules")
+	}
+	if strings.TrimSpace(request.ClosingRule) == strings.TrimSpace(notice.ClosingRule) {
+		t.Fatal("请示 and 通知 share the same closing rule")
 	}
 }
 
@@ -135,6 +201,15 @@ func TestPostgresStructureContractStoreGetAndList(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
 	}
+}
+
+func textSliceContains(items []string, keyword string) bool {
+	for _, item := range items {
+		if strings.Contains(item, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSeedStructureContractsInsertsWithoutClassificationFields(t *testing.T) {

@@ -108,15 +108,22 @@ func (o *HighFreqDraftOrchestrator) StreamDraft(ctx context.Context, principal a
 		return HighFreqDraftStreamResult{}, err
 	}
 	upstream, err := o.model.Stream(ctx, plan.ModelRequest)
+	metadata := highFreqStreamMetadata(plan.Request, plan.FewShot)
 	if err != nil {
-		return HighFreqDraftStreamResult{}, err
+		return HighFreqDraftStreamResult{
+			Request:      plan.Request,
+			FewShot:      plan.FewShot,
+			Prompt:       plan.Prompt,
+			ModelRequest: plan.ModelRequest,
+			Events:       singleHighFreqStreamEvent(highFreqModelStreamErrorEvent(err, metadata)),
+		}, nil
 	}
 	return HighFreqDraftStreamResult{
 		Request:      plan.Request,
 		FewShot:      plan.FewShot,
 		Prompt:       plan.Prompt,
 		ModelRequest: plan.ModelRequest,
-		Events:       appendHighFreqStreamMetadata(ctx, upstream, highFreqStreamMetadata(plan.Request, plan.FewShot)),
+		Events:       appendHighFreqStreamMetadata(ctx, upstream, metadata),
 	}, nil
 }
 
@@ -274,6 +281,36 @@ func highFreqCanceledStreamEvent(ctx context.Context, metadata HighFreqDraftStre
 		},
 		Metadata: &eventMetadata,
 	}
+}
+
+func highFreqModelStreamErrorEvent(err error, metadata HighFreqDraftStreamMetadata) HighFreqDraftStreamEvent {
+	eventMetadata := metadata
+	return HighFreqDraftStreamEvent{
+		StreamEvent: llm.StreamEvent{
+			Type:        llm.StreamEventTypeError,
+			ErrorReason: streamErrorReasonFromError(err),
+			Err:         err,
+		},
+		Metadata: &eventMetadata,
+	}
+}
+
+func streamErrorReasonFromError(err error) llm.ErrorReason {
+	var providerErr *llm.ProviderError
+	if errors.As(err, &providerErr) {
+		return providerErr.Reason
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return llm.ErrorReasonTimeout
+	}
+	return llm.ErrorReasonUpstream
+}
+
+func singleHighFreqStreamEvent(event HighFreqDraftStreamEvent) <-chan HighFreqDraftStreamEvent {
+	out := make(chan HighFreqDraftStreamEvent, 1)
+	out <- event
+	close(out)
+	return out
 }
 
 func sendHighFreqCancellationEvent(out chan HighFreqDraftStreamEvent, event HighFreqDraftStreamEvent) {

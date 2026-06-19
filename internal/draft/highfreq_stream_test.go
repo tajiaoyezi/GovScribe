@@ -130,6 +130,46 @@ func TestHighFreqDraftOrchestratorStreamsC01ErrorEventWithTailMetadata(t *testin
 	}
 }
 
+func TestHighFreqDraftOrchestratorStreamsC01SetupFailureAsErrorEvent(t *testing.T) {
+	model := &recordingStreamClient{err: context.DeadlineExceeded}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		singleExampleSearcher(),
+		singleContractReader(t, "通知"),
+		model,
+		allowDraftConfig(2),
+	)
+
+	result, err := orchestrator.StreamDraft(context.Background(), authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
+		Scenario: doctype.ScenarioContext{
+			TargetCapability: doctype.CapabilityC05,
+			Doctype:          "通知",
+			Subtype:          "召开会议",
+			Direction:        doctype.DirectionDownward,
+			SceneDescription: "通知各部门召开年度会议",
+		},
+		ActorID:   "actor-1",
+		RequestID: "req-1",
+	})
+	if err != nil {
+		t.Fatalf("stream draft must surface c01 setup failure through stream, got method error: %v", err)
+	}
+
+	events := collectHighFreqStreamEvents(result.Events)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want single setup failure error event", events)
+	}
+	event := events[0]
+	if event.Type != llm.StreamEventTypeError || event.ErrorReason != llm.ErrorReasonTimeout {
+		t.Fatalf("event = %#v, want timeout error event", event)
+	}
+	if !errors.Is(event.Err, context.DeadlineExceeded) {
+		t.Fatalf("event error = %v, want context deadline exceeded", event.Err)
+	}
+	if event.Metadata == nil || event.Metadata.Doctype != "通知" || event.Metadata.RequestID != "req-1" {
+		t.Fatalf("error metadata = %#v, want consumed c06 context identifiers", event.Metadata)
+	}
+}
+
 func TestHighFreqDraftOrchestratorStopsStreamAndMarksIncompleteWhenCallerCancels(t *testing.T) {
 	model := newCancelAwareStreamClient()
 	orchestrator := NewHighFreqDraftOrchestrator(

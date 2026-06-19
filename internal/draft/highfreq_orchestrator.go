@@ -5,11 +5,11 @@ import (
 	"errors"
 
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
-	"github.com/tajiaoyezi/GovScribe/internal/rag/retrieval"
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 )
 
 type TemplateExampleSearcher interface {
-	SearchExamples(context.Context, retrieval.Principal, retrieval.TemplateExampleRequest) (retrieval.TemplateExampleResult, error)
+	SearchExamples(context.Context, retrievalcontract.Principal, retrievalcontract.TemplateExampleRequest) (retrievalcontract.TemplateExampleResult, error)
 }
 
 type CompleteStructureContractReader interface {
@@ -50,7 +50,7 @@ func NewHighFreqDraftOrchestrator(
 	}
 }
 
-func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal retrieval.Principal, input HighFreqDraftRequestInput) (HighFreqDraftGenerationResult, error) {
+func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal retrievalcontract.Principal, input HighFreqDraftRequestInput) (HighFreqDraftGenerationResult, error) {
 	if o == nil {
 		return HighFreqDraftGenerationResult{}, errors.New("high frequency draft orchestrator is required")
 	}
@@ -72,7 +72,7 @@ func (o *HighFreqDraftOrchestrator) GenerateDraft(ctx context.Context, principal
 	if topK <= 0 {
 		topK = DefaultFewShotTopK
 	}
-	c03Result, err := o.examples.SearchExamples(ctx, principal, retrieval.TemplateExampleRequest{
+	c03Result, err := o.examples.SearchExamples(ctx, principal, retrievalcontract.TemplateExampleRequest{
 		Intent:       request.Context.SceneDescription,
 		DocumentType: request.Context.Doctype,
 		TopK:         topK,

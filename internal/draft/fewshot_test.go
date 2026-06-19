@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
-	"github.com/tajiaoyezi/GovScribe/internal/rag/retrieval"
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 )
 
 func TestAssembleFewShotPromptPartitionsC03ExamplesAndScenario(t *testing.T) {
@@ -14,7 +14,7 @@ func TestAssembleFewShotPromptPartitionsC03ExamplesAndScenario(t *testing.T) {
 		Subtype:          "召开会议",
 		SceneDescription: "通知各部门周五召开安全生产会议",
 		MaxExamples:      1,
-		C03RetrievedExamples: []retrieval.TemplateExample{
+		C03RetrievedExamples: []retrievalcontract.TemplateExample{
 			{
 				ChunkID:          "c1",
 				DocumentID:       "doc-1",
@@ -94,7 +94,7 @@ func TestAssembleFewShotPromptPassesC03ExampleTextVerbatim(t *testing.T) {
 	result, err := AssembleFewShotPrompt(FewShotInput{
 		Doctype:     "通知",
 		MaxExamples: 1,
-		C03RetrievedExamples: []retrieval.TemplateExample{
+		C03RetrievedExamples: []retrievalcontract.TemplateExample{
 			{ChunkID: "c1", Text: c03Text, DocumentType: "通知"},
 		},
 	})
@@ -141,7 +141,7 @@ func TestAssembleFewShotPromptMarksInsufficientExamplesAndKeepsStructureContract
 		MaxExamples:               3,
 		MinimumSufficientExamples: 2,
 		StructureContract:         contract,
-		C03RetrievedExamples: []retrieval.TemplateExample{
+		C03RetrievedExamples: []retrievalcontract.TemplateExample{
 			{ChunkID: "c1", Text: "关于召开安全生产会议的通知", DocumentType: "通知"},
 		},
 	})

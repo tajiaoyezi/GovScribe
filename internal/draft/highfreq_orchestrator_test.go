@@ -8,15 +8,15 @@ import (
 
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
 	"github.com/tajiaoyezi/GovScribe/internal/llm"
-	"github.com/tajiaoyezi/GovScribe/internal/rag/retrieval"
+	retrievalcontract "github.com/tajiaoyezi/GovScribe/internal/rag/retrieval/contract"
 )
 
 func TestHighFreqDraftOrchestratorRetrievesBeforeC01GenerationUsingC06Doctype(t *testing.T) {
 	var sequence []string
 	examples := &recordingTemplateExampleSearcher{
 		sequence: &sequence,
-		result: retrieval.TemplateExampleResult{
-			Examples: []retrieval.TemplateExample{
+		result: retrievalcontract.TemplateExampleResult{
+			Examples: []retrievalcontract.TemplateExample{
 				{ChunkID: "c1", Text: "通知范文片段", DocumentType: "通知"},
 			},
 		},
@@ -28,7 +28,7 @@ func TestHighFreqDraftOrchestratorRetrievesBeforeC01GenerationUsingC06Doctype(t 
 	model := &recordingCompleteClient{sequence: &sequence, response: llm.ChatResponse{Text: "生成正文", FinishReason: llm.FinishReasonStop}}
 	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{FewShotTopK: 2})
 
-	result, err := orchestrator.GenerateDraft(context.Background(), retrieval.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability:     doctype.CapabilityC05,
 			Doctype:              "通知",
@@ -79,7 +79,7 @@ func TestHighFreqDraftOrchestratorRejectsNonC05BeforeRetrievalOrGeneration(t *te
 	model := &recordingCompleteClient{}
 	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{})
 
-	_, err := orchestrator.GenerateDraft(context.Background(), retrieval.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	_, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC07,
 			Doctype:          "命令",
@@ -99,8 +99,8 @@ func TestHighFreqDraftOrchestratorCarriesC03InsufficientExamplesIntoPromptMetada
 	var sequence []string
 	examples := &recordingTemplateExampleSearcher{
 		sequence: &sequence,
-		result: retrieval.TemplateExampleResult{
-			Examples:             []retrieval.TemplateExample{{ChunkID: "c1", Text: "仅一条通知范文", DocumentType: "通知"}},
+		result: retrievalcontract.TemplateExampleResult{
+			Examples:             []retrievalcontract.TemplateExample{{ChunkID: "c1", Text: "仅一条通知范文", DocumentType: "通知"}},
 			InsufficientExamples: true,
 		},
 	}
@@ -108,7 +108,7 @@ func TestHighFreqDraftOrchestratorCarriesC03InsufficientExamplesIntoPromptMetada
 	model := &recordingCompleteClient{sequence: &sequence, response: llm.ChatResponse{Text: "生成正文"}}
 	orchestrator := NewHighFreqDraftOrchestrator(examples, contracts, model, HighFreqDraftOrchestratorConfig{FewShotTopK: 3})
 
-	result, err := orchestrator.GenerateDraft(context.Background(), retrieval.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+	result, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
 		Scenario: doctype.ScenarioContext{
 			TargetCapability: doctype.CapabilityC05,
 			Doctype:          "通知",
@@ -146,12 +146,12 @@ func defaultCompleteContractForOrchestratorTest(t *testing.T, doctypeName string
 type recordingTemplateExampleSearcher struct {
 	sequence *[]string
 	calls    int
-	lastReq  retrieval.TemplateExampleRequest
-	result   retrieval.TemplateExampleResult
+	lastReq  retrievalcontract.TemplateExampleRequest
+	result   retrievalcontract.TemplateExampleResult
 	err      error
 }
 
-func (s *recordingTemplateExampleSearcher) SearchExamples(_ context.Context, _ retrieval.Principal, req retrieval.TemplateExampleRequest) (retrieval.TemplateExampleResult, error) {
+func (s *recordingTemplateExampleSearcher) SearchExamples(_ context.Context, _ retrievalcontract.Principal, req retrievalcontract.TemplateExampleRequest) (retrievalcontract.TemplateExampleResult, error) {
 	s.calls++
 	s.lastReq = req
 	if s.sequence != nil {

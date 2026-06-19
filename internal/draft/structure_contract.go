@@ -241,7 +241,7 @@ func DefaultStructureContracts() []StructureContract {
 			RequiredSlots:  slots["函"],
 			ClosingRule:    "特此函达，请予函复。",
 			SignatureRule:  "发文单位署名 + 成文日期",
-			ToneRules:      []string{"平行商洽口吻", "语气平实", "事项边界清楚"},
+			ToneRules:      []string{"平行商洽口吻", "询问事项明确", "语气平实", "事项边界清楚"},
 			RedlineRules:   redlines,
 		},
 		{
@@ -280,7 +280,7 @@ func DefaultStructureContracts() []StructureContract {
 			RequiredSlots:  slots["批复"],
 			ClosingRule:    "此复。",
 			SignatureRule:  "发文单位署名 + 成文日期",
-			ToneRules:      []string{"下行答复口吻", "态度明确", "执行要求清楚"},
+			ToneRules:      []string{"下行答复口吻", "告知批复结论", "态度明确", "执行要求清楚"},
 			RedlineRules:   redlines,
 		},
 		{

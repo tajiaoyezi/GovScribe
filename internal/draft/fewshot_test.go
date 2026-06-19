@@ -130,3 +130,107 @@ func TestAssembleFewShotPromptDoesNotInventExamplesWhenC03ReturnsNone(t *testing
 		}
 	}
 }
+
+func TestAssembleFewShotPromptMarksInsufficientExamplesAndKeepsStructureContract(t *testing.T) {
+	contract := defaultStructureContractForFewShotTest(t, "通知")
+
+	result, err := AssembleFewShotPrompt(FewShotInput{
+		Doctype:                   "通知",
+		Subtype:                   "召开会议",
+		SceneDescription:          "通知各部门周五召开安全生产会议",
+		MaxExamples:               3,
+		MinimumSufficientExamples: 2,
+		StructureContract:         contract,
+		C03RetrievedExamples: []retrieval.TemplateExample{
+			{ChunkID: "c1", Text: "关于召开安全生产会议的通知", DocumentType: "通知"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("assemble few-shot prompt: %v", err)
+	}
+	if !result.Metadata.InsufficientExamples {
+		t.Fatalf("metadata insufficient examples = false, want true")
+	}
+	if result.Metadata.Warning != "范文样例不足、质量可能下降" {
+		t.Fatalf("metadata warning = %q, want insufficient example warning", result.Metadata.Warning)
+	}
+	if !result.Metadata.StructureContractApplied {
+		t.Fatalf("metadata structure contract applied = false, want true")
+	}
+	if result.Metadata.ExampleCount != 1 || result.Metadata.MinimumSufficientExamples != 2 {
+		t.Fatalf("metadata counts = %#v, want example count 1 / sufficient threshold 2", result.Metadata)
+	}
+
+	content := result.Content
+	for _, want := range []string{
+		"## 结构契约",
+		"标题构成：关于 + 事由 + 通知",
+		"正文段落结构：开头说明通知缘由；主体列明事项、时间、地点、要求；结尾提出执行或反馈要求",
+		"范文样例不足、质量可能下降",
+		"## Few-shot 范文样例",
+		"关于召开安全生产会议的通知",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{"通用兜底", "移交 c07", "fallback"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("prompt must not silently fallback via %q:\n%s", forbidden, content)
+		}
+	}
+}
+
+func TestAssembleFewShotPromptZeroExamplesStillAppliesStructureContract(t *testing.T) {
+	contract := defaultStructureContractForFewShotTest(t, "请示")
+
+	result, err := AssembleFewShotPrompt(FewShotInput{
+		Doctype:                   "请示",
+		SceneDescription:          "申请拨付专项经费",
+		MaxExamples:               3,
+		MinimumSufficientExamples: 1,
+		StructureContract:         contract,
+		C03RetrievedExamples:      nil,
+	})
+	if err != nil {
+		t.Fatalf("assemble few-shot prompt: %v", err)
+	}
+	if len(result.Examples) != 0 {
+		t.Fatalf("examples = %#v, want none when c03 returns zero examples", result.Examples)
+	}
+	if !result.Metadata.InsufficientExamples || result.Metadata.Warning != "范文样例不足、质量可能下降" {
+		t.Fatalf("metadata = %#v, want insufficient example warning", result.Metadata)
+	}
+	if !result.Metadata.StructureContractApplied {
+		t.Fatalf("metadata structure contract applied = false, want true")
+	}
+
+	content := result.Content
+	for _, want := range []string{
+		"## 结构契约",
+		"标题构成：关于 + 事由 + 的请示",
+		"结束语约束：妥否，请批示。",
+		"无可注入样例。",
+		"范文样例不足、质量可能下降",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{"通用兜底", "移交 c07", "fallback"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("prompt must not silently fallback via %q:\n%s", forbidden, content)
+		}
+	}
+}
+
+func defaultStructureContractForFewShotTest(t *testing.T, doctypeName string) StructureContract {
+	t.Helper()
+	for _, contract := range DefaultStructureContracts() {
+		if contract.Doctype == doctypeName {
+			return contract
+		}
+	}
+	t.Fatalf("missing default structure contract for %s", doctypeName)
+	return StructureContract{}
+}

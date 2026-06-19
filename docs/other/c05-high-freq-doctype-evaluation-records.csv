@@ -1,0 +1,10 @@
+sample_id,doctype,subtype,direction,security_level,scorer,scoring_round,doctype_norm_score,structure_score,direction_score,organ_tone_score,adoption_status,counts_as_adopted,notes
+C05-EVAL-001,通知,开展活动通知,下行,非密,seed-rubric-v0,baseline,4,4,4,4,小改,true,结构与执行要求完整；需按客户单位名称替换占位
+C05-EVAL-002,请示,重大事项请求审定请示,上行,非密,seed-rubric-v0,baseline,4,4,5,4,小改,true,一文一事和结束语明确；需补齐政策依据与附件
+C05-EVAL-003,报告,专项工作报告,上行,非密,seed-rubric-v0,baseline,5,4,5,4,直接用,true,报告口吻稳定；需由业务侧核实阶段性台账事实
+C05-EVAL-004,函,工作商洽函,平行,非密,seed-rubric-v0,baseline,4,4,5,4,小改,true,平行商洽口吻明确；需补齐联系人和反馈渠道
+C05-EVAL-005,会议纪要,专项工作会议纪要,下行,非密,seed-rubric-v0,baseline,4,4,4,4,小改,true,会议基本情况与议定事项完整；需补齐主持人和责任处室
+C05-EVAL-006,通报,工作事务类情况通报,下行,非密,seed-rubric-v0,baseline,4,4,4,4,小改,true,事实和整改要求清楚；需核实个别单位问题事实
+C05-EVAL-007,批复,表态式批复,下行,非密,seed-rubric-v0,baseline,5,4,5,4,直接用,true,来文引述和批复意见明确；需补齐来文字号
+C05-EVAL-008,讲话稿,工作部署讲话,未指定,非密,seed-rubric-v0,baseline,4,4,4,4,小改,true,部署层次清楚；需按实际讲话人风格调整措辞
+C05-EVAL-009,方案,工作方案,未指定,非密,seed-rubric-v0,baseline,5,5,4,4,直接用,true,总体要求目标任务安排措施完整；需由实施侧核实时间节点

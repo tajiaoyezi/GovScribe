@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tajiaoyezi/GovScribe/internal/auth"
 	"github.com/tajiaoyezi/GovScribe/internal/doctype"
@@ -129,6 +130,64 @@ func TestHighFreqDraftOrchestratorStreamsC01ErrorEventWithTailMetadata(t *testin
 	}
 }
 
+func TestHighFreqDraftOrchestratorStopsStreamAndMarksIncompleteWhenCallerCancels(t *testing.T) {
+	model := newCancelAwareStreamClient()
+	orchestrator := NewHighFreqDraftOrchestrator(
+		singleExampleSearcher(),
+		singleContractReader(t, "通知"),
+		model,
+		allowDraftConfig(2),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	result, err := orchestrator.StreamDraft(ctx, authorizedDraftPrincipal("u1"), HighFreqDraftRequestInput{
+		Scenario: doctype.ScenarioContext{
+			TargetCapability: doctype.CapabilityC05,
+			Doctype:          "通知",
+			Subtype:          "召开会议",
+			Direction:        doctype.DirectionDownward,
+			SceneDescription: "通知各部门召开年度会议",
+		},
+		ActorID:   "actor-1",
+		RequestID: "req-1",
+	})
+	if err != nil {
+		t.Fatalf("stream draft: %v", err)
+	}
+
+	first, ok := receiveHighFreqStreamEvent(t, result.Events)
+	if !ok {
+		t.Fatal("stream closed before first delta")
+	}
+	if first.Type != llm.StreamEventTypeDelta || first.Delta != "半截" {
+		t.Fatalf("first event = %#v, want half draft delta", first)
+	}
+
+	cancel()
+	select {
+	case <-model.released:
+	case <-time.After(time.Second):
+		t.Fatal("model stream resources were not released after caller cancellation")
+	}
+	tail, ok := receiveHighFreqStreamEvent(t, result.Events)
+	if !ok {
+		t.Fatal("stream closed without cancellation error event")
+	}
+	if tail.Type != llm.StreamEventTypeError || tail.ErrorReason != llm.ErrorReasonTimeout {
+		t.Fatalf("tail event = %#v, want timeout error event for caller cancellation", tail)
+	}
+	if !errors.Is(tail.Err, context.Canceled) {
+		t.Fatalf("tail error = %v, want context.Canceled", tail.Err)
+	}
+	if tail.Metadata == nil || tail.Metadata.RequestID != "req-1" {
+		t.Fatalf("cancellation tail metadata = %#v, want consumed c06 context identifiers", tail.Metadata)
+	}
+	if got, ok := receiveHighFreqStreamEvent(t, result.Events); ok {
+		t.Fatalf("unexpected event after cancellation tail: %#v", got)
+	}
+}
+
 func TestHighFreqDraftStreamDeltasAreEquivalentToCompleteDraftTextForSameRequest(t *testing.T) {
 	completeClient := &recordingCompleteClient{response: llm.ChatResponse{Text: "正文片段", FinishReason: llm.FinishReasonStop}}
 	streamClient := &recordingStreamClient{
@@ -223,6 +282,37 @@ func (c *recordingStreamClient) CurrentNetwork(context.Context) (llm.Network, er
 	return llm.NetworkPrivate, nil
 }
 
+type cancelAwareStreamClient struct {
+	streamCalls   int
+	lastStreamReq llm.ChatRequest
+	released      chan struct{}
+}
+
+func newCancelAwareStreamClient() *cancelAwareStreamClient {
+	return &cancelAwareStreamClient{released: make(chan struct{})}
+}
+
+func (c *cancelAwareStreamClient) Complete(context.Context, llm.ChatRequest) (llm.ChatResponse, error) {
+	panic("not used")
+}
+
+func (c *cancelAwareStreamClient) Stream(ctx context.Context, req llm.ChatRequest) (<-chan llm.StreamEvent, error) {
+	c.streamCalls++
+	c.lastStreamReq = req
+	ch := make(chan llm.StreamEvent)
+	go func() {
+		defer close(ch)
+		ch <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: "半截"}
+		<-ctx.Done()
+		close(c.released)
+	}()
+	return ch, nil
+}
+
+func (c *cancelAwareStreamClient) CurrentNetwork(context.Context) (llm.Network, error) {
+	return llm.NetworkPrivate, nil
+}
+
 func TestHighFreqDraftOrchestratorStreamRequiresDraftCreateAuthorization(t *testing.T) {
 	store := auth.NewMemoryStore()
 	examples := &recordingTemplateExampleSearcher{}
@@ -250,6 +340,17 @@ func collectHighFreqStreamEvents(events <-chan HighFreqDraftStreamEvent) []HighF
 		collected = append(collected, event)
 	}
 	return collected
+}
+
+func receiveHighFreqStreamEvent(t *testing.T, events <-chan HighFreqDraftStreamEvent) (HighFreqDraftStreamEvent, bool) {
+	t.Helper()
+	select {
+	case event, ok := <-events:
+		return event, ok
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for high frequency stream event")
+	}
+	return HighFreqDraftStreamEvent{}, false
 }
 
 func joinedHighFreqDeltas(events []HighFreqDraftStreamEvent) string {

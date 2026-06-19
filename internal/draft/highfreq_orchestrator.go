@@ -116,7 +116,7 @@ func (o *HighFreqDraftOrchestrator) StreamDraft(ctx context.Context, principal a
 		FewShot:      plan.FewShot,
 		Prompt:       plan.Prompt,
 		ModelRequest: plan.ModelRequest,
-		Events:       appendHighFreqStreamMetadata(upstream, highFreqStreamMetadata(plan.Request, plan.FewShot)),
+		Events:       appendHighFreqStreamMetadata(ctx, upstream, highFreqStreamMetadata(plan.Request, plan.FewShot)),
 	}, nil
 }
 
@@ -212,22 +212,63 @@ func highFreqStreamMetadata(request HighFreqDraftRequest, fewShot FewShotPrompt)
 	}
 }
 
-func appendHighFreqStreamMetadata(upstream <-chan llm.StreamEvent, metadata HighFreqDraftStreamMetadata) <-chan HighFreqDraftStreamEvent {
-	out := make(chan HighFreqDraftStreamEvent)
+func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.StreamEvent, metadata HighFreqDraftStreamMetadata) <-chan HighFreqDraftStreamEvent {
+	out := make(chan HighFreqDraftStreamEvent, 1)
 	go func() {
 		defer close(out)
 		started := false
-		for event := range upstream {
-			wrapped := HighFreqDraftStreamEvent{StreamEvent: event}
-			if !started || isTerminalStreamEvent(event) {
-				eventMetadata := metadata
-				wrapped.Metadata = &eventMetadata
+		for {
+			select {
+			case <-ctx.Done():
+				sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+				return
+			case event, ok := <-upstream:
+				if !ok {
+					if ctx.Err() != nil {
+						sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+					}
+					return
+				}
+				wrapped := wrapHighFreqStreamEvent(event, metadata, !started)
+				started = true
+				select {
+				case out <- wrapped:
+				case <-ctx.Done():
+					sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+					return
+				}
 			}
-			started = true
-			out <- wrapped
 		}
 	}()
 	return out
+}
+
+func wrapHighFreqStreamEvent(event llm.StreamEvent, metadata HighFreqDraftStreamMetadata, first bool) HighFreqDraftStreamEvent {
+	wrapped := HighFreqDraftStreamEvent{StreamEvent: event}
+	if first || isTerminalStreamEvent(event) {
+		eventMetadata := metadata
+		wrapped.Metadata = &eventMetadata
+	}
+	return wrapped
+}
+
+func highFreqCanceledStreamEvent(ctx context.Context, metadata HighFreqDraftStreamMetadata) HighFreqDraftStreamEvent {
+	eventMetadata := metadata
+	return HighFreqDraftStreamEvent{
+		StreamEvent: llm.StreamEvent{
+			Type:        llm.StreamEventTypeError,
+			ErrorReason: llm.ErrorReasonTimeout,
+			Err:         ctx.Err(),
+		},
+		Metadata: &eventMetadata,
+	}
+}
+
+func sendHighFreqStreamEvent(out chan<- HighFreqDraftStreamEvent, event HighFreqDraftStreamEvent) {
+	select {
+	case out <- event:
+	default:
+	}
 }
 
 func isTerminalStreamEvent(event llm.StreamEvent) bool {

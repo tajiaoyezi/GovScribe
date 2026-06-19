@@ -219,22 +219,22 @@ func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.Strea
 		started := false
 		for {
 			if ctx.Err() != nil {
-				sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+				sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 				return
 			}
 			select {
 			case <-ctx.Done():
-				sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+				sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 				return
 			case event, ok := <-upstream:
 				if !ok {
 					if ctx.Err() != nil {
-						sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+						sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					}
 					return
 				}
 				if ctx.Err() != nil {
-					sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+					sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					return
 				}
 				wrapped := wrapHighFreqStreamEvent(event, metadata, !started)
@@ -242,7 +242,7 @@ func appendHighFreqStreamMetadata(ctx context.Context, upstream <-chan llm.Strea
 				select {
 				case out <- wrapped:
 				case <-ctx.Done():
-					sendHighFreqStreamEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
+					sendHighFreqCancellationEvent(out, highFreqCanceledStreamEvent(ctx, metadata))
 					return
 				}
 			}
@@ -272,8 +272,19 @@ func highFreqCanceledStreamEvent(ctx context.Context, metadata HighFreqDraftStre
 	}
 }
 
-func sendHighFreqStreamEvent(out chan<- HighFreqDraftStreamEvent, event HighFreqDraftStreamEvent) {
-	out <- event
+func sendHighFreqCancellationEvent(out chan HighFreqDraftStreamEvent, event HighFreqDraftStreamEvent) {
+	for {
+		select {
+		case out <- event:
+			return
+		default:
+		}
+		select {
+		case <-out:
+		default:
+			return
+		}
+	}
 }
 
 func isTerminalStreamEvent(event llm.StreamEvent) bool {

@@ -188,7 +188,7 @@ func TestHighFreqDraftOrchestratorStopsStreamAndMarksIncompleteWhenCallerCancels
 	}
 }
 
-func TestHighFreqDraftStreamCancellationErrorIsNotDroppedWhenDeltaIsBuffered(t *testing.T) {
+func TestHighFreqDraftStreamCancellationReplacesUndeliveredBufferedDeltaWithError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	upstream := make(chan llm.StreamEvent, 1)
 	upstream <- llm.StreamEvent{Type: llm.StreamEventTypeDelta, Delta: "半截"}
@@ -196,22 +196,19 @@ func TestHighFreqDraftStreamCancellationErrorIsNotDroppedWhenDeltaIsBuffered(t *
 	waitForBufferedHighFreqEvents(t, events, 1)
 
 	cancel()
-	first, ok := receiveHighFreqStreamEvent(t, events)
+	waitForStreamWrapperToProcessCancellation()
+	event, ok := receiveHighFreqStreamEvent(t, events)
 	if !ok {
-		t.Fatal("stream closed before buffered delta")
+		t.Fatal("stream closed without cancellation error")
 	}
-	if first.Type != llm.StreamEventTypeDelta || first.Delta != "半截" {
-		t.Fatalf("first event = %#v, want buffered delta", first)
+	if event.Type != llm.StreamEventTypeError || event.ErrorReason != llm.ErrorReasonTimeout {
+		t.Fatalf("event = %#v, want timeout error event", event)
 	}
-	tail, ok := receiveHighFreqStreamEvent(t, events)
-	if !ok {
-		t.Fatal("stream closed without cancellation error after buffered delta")
+	if !errors.Is(event.Err, context.Canceled) {
+		t.Fatalf("event error = %v, want context.Canceled", event.Err)
 	}
-	if tail.Type != llm.StreamEventTypeError || tail.ErrorReason != llm.ErrorReasonTimeout {
-		t.Fatalf("tail event = %#v, want timeout error event", tail)
-	}
-	if !errors.Is(tail.Err, context.Canceled) {
-		t.Fatalf("tail error = %v, want context.Canceled", tail.Err)
+	if got, ok := receiveHighFreqStreamEvent(t, events); ok {
+		t.Fatalf("unexpected event after cancellation tail: %#v", got)
 	}
 }
 
@@ -423,6 +420,10 @@ func waitForBufferedHighFreqEvents(t *testing.T, events <-chan HighFreqDraftStre
 		case <-ticker.C:
 		}
 	}
+}
+
+func waitForStreamWrapperToProcessCancellation() {
+	time.Sleep(20 * time.Millisecond)
 }
 
 func streamMetadataForCancellationTest() HighFreqDraftStreamMetadata {

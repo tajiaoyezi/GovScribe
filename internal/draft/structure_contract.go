@@ -187,7 +187,8 @@ func DefaultStructureContracts() []StructureContract {
 	slots := defaultRequiredSlotsByDoctype()
 	redlines := []string{
 		"政治性表述必须准确",
-		"不得臆造事实、数据、文号、人名或单位名",
+		"不得臆造事实、数据、文号、人名、单位名或单位全称",
+		"不得输出敏感或不合规表述",
 		"缺失关键要素必须留占位或待补提示",
 		"产出仅为待人工核稿的初稿，不含自动发文或自动提交语义",
 	}

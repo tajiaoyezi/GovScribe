@@ -126,6 +126,35 @@ func TestHighFreqDraftOrchestratorCarriesC03InsufficientExamplesIntoPromptMetada
 	}
 }
 
+func TestHighFreqDraftOrchestratorPromptForbidsLayoutOutput(t *testing.T) {
+	model := &recordingCompleteClient{response: llm.ChatResponse{Text: "生成正文"}}
+	orchestrator := NewHighFreqDraftOrchestrator(
+		singleExampleSearcher(),
+		singleContractReader(t, "通知"),
+		model,
+		HighFreqDraftOrchestratorConfig{FewShotTopK: 2},
+	)
+
+	_, err := orchestrator.GenerateDraft(context.Background(), retrievalcontract.Principal{ID: "u1"}, HighFreqDraftRequestInput{
+		Scenario: doctype.ScenarioContext{
+			TargetCapability: doctype.CapabilityC05,
+			Doctype:          "通知",
+			Subtype:          "召开会议",
+			SceneDescription: "通知各部门召开年度会议",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate draft: %v", err)
+	}
+
+	prompt := joinedMessages(model.lastReq.Messages)
+	for _, want := range []string{"GB/T 9704", "版式", "红头", "字体字号"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("layout exclusion prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func defaultCompleteContractForOrchestratorTest(t *testing.T, doctypeName string) CompleteStructureContract {
 	t.Helper()
 	for _, contract := range DefaultStructureContracts() {

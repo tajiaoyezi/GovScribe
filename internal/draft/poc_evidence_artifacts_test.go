@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	c05SyntheticPoCEvidencePattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(fake|mock|stub|httptest|testserver|localhost|127\.0\.0\.1|::1|unit[_ -]?test|example\.com)([^a-z0-9]|$)`)
-	c05CrossCompileOnlyEvidenceRegex = regexp.MustCompile(`(?i)(cross[-_ ]?(build|compile|compiled)|交叉编译|host[-_ ]?only|localhost|127\.0\.0\.1|windows|x86_64|amd64|本机运行)`)
+	c05SyntheticPoCEvidencePattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(fake|faked|mock|mocked|stub|stubbed|dummy|httptest|testserver|localhost|127\.0\.0\.1|::1|unit[_ -]?test|example\.com|local[-_ ]?(model|endpoint|gateway|server)|dev[-_ ]?(model|endpoint|gateway|server)|test[-_ ]?(model|endpoint|gateway|server))([^a-z0-9]|$)`)
+	c05CrossCompileOnlyEvidenceRegex = regexp.MustCompile(`(?i)(cross[-_ ]?(build|compile|compiled)|交叉编译|host[-_ ]?only|local[-_ ]?(host|runtime|machine)|dev[-_ ]?(host|machine)|localhost|127\.0\.0\.1|windows|x86_64|amd64|本机运行)`)
 )
 
 func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
@@ -58,7 +58,11 @@ func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
 func TestC05PoCEvidenceRejectsSyntheticPrivateModelSignals(t *testing.T) {
 	rejected := []string{
 		"fake-provider",
+		"mocked-provider",
 		"local_stub_gateway",
+		"local-model-endpoint",
+		"dev-server-private-model",
+		"dummy-domestic-model",
 		"httptest-model-endpoint",
 		"http://localhost:8080/v1",
 		"http://127.0.0.1:9000/v1",
@@ -88,6 +92,8 @@ func TestC05PoCEvidenceRejectsCrossCompileOnlyRuntimeSignals(t *testing.T) {
 		"cross_compile_artifact_only",
 		"仅交叉编译未上机",
 		"windows-amd64-host-only",
+		"local-host-runtime-log",
+		"dev-machine-run",
 		"本机运行记录",
 	}
 	for _, value := range rejected {

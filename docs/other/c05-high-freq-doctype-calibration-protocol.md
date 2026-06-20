@@ -46,7 +46,7 @@
 - `run_id` 必须唯一，并能追溯到模型输出对象或日志。
 - `c03_query_id` 必须指向 c03 检索结果；不得填本地原文路径。
 - `prompt_variant_id` 必须能说明 TopK、提示总长上限与契约措辞版本。
-- `model_endpoint_evidence_ref` 必须指向真实目标模型端点、部署清单或网关证明引用；不得为 `fake`、`mock`、`stub`、`httptest`、`localhost`、`127.0.0.1`、`unit-test` 等本地假服务或单测证据。
+- `model_endpoint_evidence_ref` 必须指向真实目标模型端点、部署清单或网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `content_security_level` 必须来自 c06 上下文，取值为 `非密` / `敏感` / `涉密`。
 - `first_token_ms` 与 `total_generation_ms` 必须来自真实运行计时；不得用估算值。
 - `output_ref` 只记录脱敏后输出引用，不记录完整正文。

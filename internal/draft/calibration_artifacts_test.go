@@ -235,9 +235,6 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 
 			referencedRuns := make([]calibrationRunEvidence, 0, len(evidenceRefs.runIDs))
 			referencedRunIDs := map[string]bool{}
-			hasSelectedTopK := false
-			hasSelectedPromptTotalChars := false
-			hasSelectedContractVersion := false
 			for _, runID := range evidenceRefs.runIDs {
 				run, ok := runs[runID]
 				if !ok {
@@ -256,28 +253,17 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 				if !run.streamCompleted {
 					t.Fatalf("calibration decisions row %d references incomplete run %q for pass/fail decision", rowNumber, runID)
 				}
-				if run.topK == selectedTopK {
-					hasSelectedTopK = true
-				}
-				if run.promptTotalChars == selectedPromptTotalChars {
-					hasSelectedPromptTotalChars = true
-				}
-				if run.contractVersion == selectedContractVersion {
-					hasSelectedContractVersion = true
+				if run.topK != selectedTopK || run.promptTotalChars != selectedPromptTotalChars || run.contractVersion != selectedContractVersion {
+					t.Fatalf(
+						"calibration decisions row %d references run %q with topk/chars/version = %d/%d/%q, want selected %d/%d/%q",
+						rowNumber, runID, run.topK, run.promptTotalChars, run.contractVersion,
+						selectedTopK, selectedPromptTotalChars, selectedContractVersion,
+					)
 				}
 				referencedRuns = append(referencedRuns, run)
 			}
 			if runCount != len(referencedRuns) {
 				t.Fatalf("calibration decisions row %d run_count = %d, want %d referenced unique runs", rowNumber, runCount, len(referencedRuns))
-			}
-			if !hasSelectedTopK {
-				t.Fatalf("calibration decisions row %d selected_topk = %d is not backed by referenced runs", rowNumber, selectedTopK)
-			}
-			if !hasSelectedPromptTotalChars {
-				t.Fatalf("calibration decisions row %d selected_prompt_total_chars = %d is not backed by referenced runs", rowNumber, selectedPromptTotalChars)
-			}
-			if !hasSelectedContractVersion {
-				t.Fatalf("calibration decisions row %d selected_contract_version = %q is not backed by referenced runs", rowNumber, selectedContractVersion)
 			}
 			if gotMedian := medianInt(referencedRuns, func(run calibrationRunEvidence) int { return run.firstTokenMS }); medianFirstTokenMS != gotMedian {
 				t.Fatalf("calibration decisions row %d median_first_token_ms = %d, want %d from referenced runs", rowNumber, medianFirstTokenMS, gotMedian)
@@ -287,6 +273,7 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 			}
 
 			referencedReviews := make([]calibrationReviewEvidence, 0, len(evidenceRefs.reviewRecordIDs))
+			reviewedRunIDs := map[string]bool{}
 			for _, reviewRecordID := range evidenceRefs.reviewRecordIDs {
 				review, ok := reviews[reviewRecordID]
 				if !ok {
@@ -295,7 +282,13 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 				if !referencedRunIDs[review.runID] {
 					t.Fatalf("calibration decisions row %d references review %q for run %q not present in evidence_refs", rowNumber, reviewRecordID, review.runID)
 				}
+				reviewedRunIDs[review.runID] = true
 				referencedReviews = append(referencedReviews, review)
+			}
+			for runID := range referencedRunIDs {
+				if !reviewedRunIDs[runID] {
+					t.Fatalf("calibration decisions row %d references run %q without a corresponding review evidence ref", rowNumber, runID)
+				}
 			}
 			if gotAdoptionRate := adoptionRateFromReviews(referencedReviews); math.Abs(adoptionRate-gotAdoptionRate) > 0.005 {
 				t.Fatalf("calibration decisions row %d adoption_rate = %.4f, want %.4f from referenced reviews", rowNumber, adoptionRate, gotAdoptionRate)

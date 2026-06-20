@@ -62,24 +62,49 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		"ready_for_model_run": true, "insufficient": true,
 	}
 
-	for _, row := range rows {
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
 		doctype := row[index["doctype"]]
 		if _, ok := wantDoctypes[doctype]; !ok {
 			t.Fatalf("unexpected doctype %q in calibration candidates", doctype)
 		}
 		wantDoctypes[doctype] = true
-		for _, field := range []string{"raw_package_count", "readable_package_count"} {
-			if _, err := strconv.Atoi(row[index[field]]); err != nil {
-				t.Fatalf("%s for %s = %q, want integer: %v", field, doctype, row[index[field]], err)
-			}
+		candidateBatch := requiredCell(t, row, index, "candidate_batch", rowNumber)
+		requiredCell(t, row, index, "notes", rowNumber)
+		if strings.Contains(candidateBatch, "各类文件") {
+			t.Fatalf("candidate_batch for %s exposes local raw corpus directory: %q", doctype, candidateBatch)
 		}
-		if status := row[index["gate_status"]]; !allowedGateStatus[status] {
+		rawPackageCount, err := strconv.Atoi(row[index["raw_package_count"]])
+		if err != nil {
+			t.Fatalf("raw_package_count for %s = %q, want integer: %v", doctype, row[index["raw_package_count"]], err)
+		}
+		readablePackageCount, err := strconv.Atoi(row[index["readable_package_count"]])
+		if err != nil {
+			t.Fatalf("readable_package_count for %s = %q, want integer: %v", doctype, row[index["readable_package_count"]], err)
+		}
+		if rawPackageCount < 0 || readablePackageCount < 0 {
+			t.Fatalf("candidate counts for %s must be non-negative, got raw=%d readable=%d", doctype, rawPackageCount, readablePackageCount)
+		}
+		if readablePackageCount > rawPackageCount {
+			t.Fatalf("readable_package_count for %s = %d, want <= raw_package_count %d", doctype, readablePackageCount, rawPackageCount)
+		}
+		status := row[index["gate_status"]]
+		if !allowedGateStatus[status] {
 			t.Fatalf("gate_status for %s = %q, want one of known statuses", doctype, status)
 		}
 		if got := row[index["c03_retrievable_count"]]; got != "pending" {
 			if _, err := strconv.Atoi(got); err != nil {
 				t.Fatalf("c03_retrievable_count for %s = %q, want pending or integer: %v", doctype, got, err)
 			}
+		}
+		if status == "ready_for_model_run" {
+			retrievableCount, err := strconv.Atoi(row[index["c03_retrievable_count"]])
+			if err != nil || retrievableCount <= 0 {
+				t.Fatalf("gate_status ready_for_model_run for %s requires positive c03_retrievable_count, got %q", doctype, row[index["c03_retrievable_count"]])
+			}
+		}
+		if rawPackageCount == 0 && status != "pending_corpus" && status != "insufficient" {
+			t.Fatalf("gate_status for %s = %q with zero raw candidates, want pending_corpus or insufficient", doctype, status)
 		}
 	}
 	for doctype, seen := range wantDoctypes {

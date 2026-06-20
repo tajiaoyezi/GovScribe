@@ -2,9 +2,11 @@ package draft
 
 import (
 	"encoding/csv"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,6 +193,8 @@ func TestC05CalibrationReviewRowsReferenceRunsAndScoreRubric(t *testing.T) {
 }
 
 func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
+	runs := readCalibrationRunEvidence(t)
+	reviews := readCalibrationReviewEvidence(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-decisions.csv")
 	index := csvIndex(header)
 	seenDecisionIDs := map[string]bool{}
@@ -216,14 +220,86 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 		requiredCell(t, row, index, "notes", rowNumber)
 
 		if passFail == "pass" || passFail == "fail" {
-			requirePositiveIntCell(t, row, index, "selected_topk", rowNumber)
-			requirePositiveIntCell(t, row, index, "selected_prompt_total_chars", rowNumber)
-			requiredCell(t, row, index, "selected_contract_version", rowNumber)
-			requirePositiveIntCell(t, row, index, "run_count", rowNumber)
-			requireRatioCell(t, row, index, "adoption_rate", rowNumber)
-			requirePositiveIntCell(t, row, index, "median_first_token_ms", rowNumber)
-			requirePositiveIntCell(t, row, index, "p95_total_generation_ms", rowNumber)
-			requiredCell(t, row, index, "evidence_refs", rowNumber)
+			selectedTopK := requirePositiveIntCell(t, row, index, "selected_topk", rowNumber)
+			selectedPromptTotalChars := requirePositiveIntCell(t, row, index, "selected_prompt_total_chars", rowNumber)
+			selectedContractVersion := requiredCell(t, row, index, "selected_contract_version", rowNumber)
+			runCount := requirePositiveIntCell(t, row, index, "run_count", rowNumber)
+			adoptionRate := requireRatioCell(t, row, index, "adoption_rate", rowNumber)
+			medianFirstTokenMS := requirePositiveIntCell(t, row, index, "median_first_token_ms", rowNumber)
+			p95TotalGenerationMS := requirePositiveIntCell(t, row, index, "p95_total_generation_ms", rowNumber)
+			evidenceRefs := parseCalibrationEvidenceRefs(t, requiredCell(t, row, index, "evidence_refs", rowNumber), rowNumber)
+
+			if len(evidenceRefs.runIDs) == 0 || len(evidenceRefs.reviewRecordIDs) == 0 {
+				t.Fatalf("calibration decisions row %d evidence_refs must include at least one run:<id> and one review:<id>", rowNumber)
+			}
+
+			referencedRuns := make([]calibrationRunEvidence, 0, len(evidenceRefs.runIDs))
+			referencedRunIDs := map[string]bool{}
+			hasSelectedTopK := false
+			hasSelectedPromptTotalChars := false
+			hasSelectedContractVersion := false
+			for _, runID := range evidenceRefs.runIDs {
+				run, ok := runs[runID]
+				if !ok {
+					t.Fatalf("calibration decisions row %d references unknown run_id %q", rowNumber, runID)
+				}
+				if referencedRunIDs[runID] {
+					continue
+				}
+				referencedRunIDs[runID] = true
+				if run.doctype != doctype {
+					t.Fatalf("calibration decisions row %d references run %q for doctype %q, want %q", rowNumber, runID, run.doctype, doctype)
+				}
+				if subtype := strings.TrimSpace(row[index["subtype"]]); subtype != "" && run.subtype != subtype {
+					t.Fatalf("calibration decisions row %d references run %q for subtype %q, want %q", rowNumber, runID, run.subtype, subtype)
+				}
+				if !run.streamCompleted {
+					t.Fatalf("calibration decisions row %d references incomplete run %q for pass/fail decision", rowNumber, runID)
+				}
+				if run.topK == selectedTopK {
+					hasSelectedTopK = true
+				}
+				if run.promptTotalChars == selectedPromptTotalChars {
+					hasSelectedPromptTotalChars = true
+				}
+				if run.contractVersion == selectedContractVersion {
+					hasSelectedContractVersion = true
+				}
+				referencedRuns = append(referencedRuns, run)
+			}
+			if runCount != len(referencedRuns) {
+				t.Fatalf("calibration decisions row %d run_count = %d, want %d referenced unique runs", rowNumber, runCount, len(referencedRuns))
+			}
+			if !hasSelectedTopK {
+				t.Fatalf("calibration decisions row %d selected_topk = %d is not backed by referenced runs", rowNumber, selectedTopK)
+			}
+			if !hasSelectedPromptTotalChars {
+				t.Fatalf("calibration decisions row %d selected_prompt_total_chars = %d is not backed by referenced runs", rowNumber, selectedPromptTotalChars)
+			}
+			if !hasSelectedContractVersion {
+				t.Fatalf("calibration decisions row %d selected_contract_version = %q is not backed by referenced runs", rowNumber, selectedContractVersion)
+			}
+			if gotMedian := medianInt(referencedRuns, func(run calibrationRunEvidence) int { return run.firstTokenMS }); medianFirstTokenMS != gotMedian {
+				t.Fatalf("calibration decisions row %d median_first_token_ms = %d, want %d from referenced runs", rowNumber, medianFirstTokenMS, gotMedian)
+			}
+			if gotP95 := p95Int(referencedRuns, func(run calibrationRunEvidence) int { return run.totalGenerationMS }); p95TotalGenerationMS != gotP95 {
+				t.Fatalf("calibration decisions row %d p95_total_generation_ms = %d, want %d from referenced runs", rowNumber, p95TotalGenerationMS, gotP95)
+			}
+
+			referencedReviews := make([]calibrationReviewEvidence, 0, len(evidenceRefs.reviewRecordIDs))
+			for _, reviewRecordID := range evidenceRefs.reviewRecordIDs {
+				review, ok := reviews[reviewRecordID]
+				if !ok {
+					t.Fatalf("calibration decisions row %d references unknown review_record_id %q", rowNumber, reviewRecordID)
+				}
+				if !referencedRunIDs[review.runID] {
+					t.Fatalf("calibration decisions row %d references review %q for run %q not present in evidence_refs", rowNumber, reviewRecordID, review.runID)
+				}
+				referencedReviews = append(referencedReviews, review)
+			}
+			if gotAdoptionRate := adoptionRateFromReviews(referencedReviews); math.Abs(adoptionRate-gotAdoptionRate) > 0.005 {
+				t.Fatalf("calibration decisions row %d adoption_rate = %.4f, want %.4f from referenced reviews", rowNumber, adoptionRate, gotAdoptionRate)
+			}
 		}
 		if passFail == "pass" {
 			passedDoctypes[doctype] = true
@@ -286,6 +362,167 @@ func c05HighFreqDoctypeSeen() map[string]bool {
 		"通知": false, "请示": false, "报告": false, "函": false, "会议纪要": false,
 		"通报": false, "批复": false, "讲话稿": false, "方案": false,
 	}
+}
+
+type calibrationRunEvidence struct {
+	id                string
+	doctype           string
+	subtype           string
+	topK              int
+	promptTotalChars  int
+	contractVersion   string
+	firstTokenMS      int
+	totalGenerationMS int
+	streamCompleted   bool
+}
+
+type calibrationReviewEvidence struct {
+	id              string
+	runID           string
+	countsAsAdopted bool
+}
+
+type calibrationEvidenceRefs struct {
+	runIDs          []string
+	reviewRecordIDs []string
+}
+
+func readCalibrationRunEvidence(t *testing.T) map[string]calibrationRunEvidence {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-runs.csv")
+	index := csvIndex(header)
+	runs := map[string]calibrationRunEvidence{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		runID := strings.TrimSpace(row[index["run_id"]])
+		if runID == "" {
+			continue
+		}
+		topK, _ := strconv.Atoi(row[index["topk"]])
+		promptTotalChars, _ := strconv.Atoi(row[index["prompt_total_chars"]])
+		firstTokenMS, _ := strconv.Atoi(row[index["first_token_ms"]])
+		totalGenerationMS, _ := strconv.Atoi(row[index["total_generation_ms"]])
+		streamCompleted, err := strconv.ParseBool(row[index["stream_completed"]])
+		if err != nil {
+			t.Fatalf("calibration runs row %d stream_completed = %q, want boolean: %v", rowNumber, row[index["stream_completed"]], err)
+		}
+		runs[runID] = calibrationRunEvidence{
+			id:                runID,
+			doctype:           strings.TrimSpace(row[index["doctype"]]),
+			subtype:           strings.TrimSpace(row[index["subtype"]]),
+			topK:              topK,
+			promptTotalChars:  promptTotalChars,
+			contractVersion:   strings.TrimSpace(row[index["contract_version"]]),
+			firstTokenMS:      firstTokenMS,
+			totalGenerationMS: totalGenerationMS,
+			streamCompleted:   streamCompleted,
+		}
+	}
+	return runs
+}
+
+func readCalibrationReviewEvidence(t *testing.T) map[string]calibrationReviewEvidence {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-reviews.csv")
+	index := csvIndex(header)
+	reviews := map[string]calibrationReviewEvidence{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		reviewRecordID := strings.TrimSpace(row[index["review_record_id"]])
+		if reviewRecordID == "" {
+			continue
+		}
+		countsAsAdopted, err := strconv.ParseBool(row[index["counts_as_adopted"]])
+		if err != nil {
+			t.Fatalf("calibration reviews row %d counts_as_adopted = %q, want boolean: %v", rowNumber, row[index["counts_as_adopted"]], err)
+		}
+		reviews[reviewRecordID] = calibrationReviewEvidence{
+			id:              reviewRecordID,
+			runID:           strings.TrimSpace(row[index["run_id"]]),
+			countsAsAdopted: countsAsAdopted,
+		}
+	}
+	return reviews
+}
+
+func parseCalibrationEvidenceRefs(t *testing.T, value string, rowNumber int) calibrationEvidenceRefs {
+	t.Helper()
+	refs := calibrationEvidenceRefs{}
+	seenRunIDs := map[string]bool{}
+	seenReviewRecordIDs := map[string]bool{}
+	for _, token := range strings.Split(value, ";") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(token, "run:"):
+			runID := strings.TrimSpace(strings.TrimPrefix(token, "run:"))
+			if runID == "" {
+				t.Fatalf("calibration decisions row %d has empty run evidence ref in %q", rowNumber, value)
+			}
+			if seenRunIDs[runID] {
+				t.Fatalf("calibration decisions row %d duplicates run evidence ref %q", rowNumber, runID)
+			}
+			seenRunIDs[runID] = true
+			refs.runIDs = append(refs.runIDs, runID)
+		case strings.HasPrefix(token, "review:"):
+			reviewRecordID := strings.TrimSpace(strings.TrimPrefix(token, "review:"))
+			if reviewRecordID == "" {
+				t.Fatalf("calibration decisions row %d has empty review evidence ref in %q", rowNumber, value)
+			}
+			if seenReviewRecordIDs[reviewRecordID] {
+				t.Fatalf("calibration decisions row %d duplicates review evidence ref %q", rowNumber, reviewRecordID)
+			}
+			seenReviewRecordIDs[reviewRecordID] = true
+			refs.reviewRecordIDs = append(refs.reviewRecordIDs, reviewRecordID)
+		default:
+			t.Fatalf("calibration decisions row %d evidence_refs token %q must use run:<id> or review:<id>", rowNumber, token)
+		}
+	}
+	return refs
+}
+
+func medianInt(runs []calibrationRunEvidence, pick func(calibrationRunEvidence) int) int {
+	values := make([]int, 0, len(runs))
+	for _, run := range runs {
+		values = append(values, pick(run))
+	}
+	sort.Ints(values)
+	mid := len(values) / 2
+	if len(values)%2 == 1 {
+		return values[mid]
+	}
+	return int(math.Round(float64(values[mid-1]+values[mid]) / 2))
+}
+
+func p95Int(runs []calibrationRunEvidence, pick func(calibrationRunEvidence) int) int {
+	values := make([]int, 0, len(runs))
+	for _, run := range runs {
+		values = append(values, pick(run))
+	}
+	sort.Ints(values)
+	index := int(math.Ceil(float64(len(values))*0.95)) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(values) {
+		index = len(values) - 1
+	}
+	return values[index]
+}
+
+func adoptionRateFromReviews(reviews []calibrationReviewEvidence) float64 {
+	if len(reviews) == 0 {
+		return 0
+	}
+	adopted := 0
+	for _, review := range reviews {
+		if review.countsAsAdopted {
+			adopted++
+		}
+	}
+	return float64(adopted) / float64(len(reviews))
 }
 
 func requireKnownC05Doctype(t *testing.T, doctype, source string, rowNumber int) {

@@ -37,9 +37,12 @@
 - `doctype` 必须属于 c05 9 个高频文种。
 - `raw_package_count` 与 `readable_package_count` 只登记数量，不登记原文标题或正文。
 - `readable_package_count` 不得大于 `raw_package_count`；二者为 0 时，`gate_status` 只能为 `pending_corpus` 或 `insufficient`。
+- `desensitized_batch_ref` 只记录脱敏后样本批次引用；未完成脱敏前填 `pending`，不得记录本地路径、原始目录名、文件名或正文标题。
+- `c03_query_ref` 只记录 c03 可检索样例的查询 / 批次引用；未完成 c03 入库前填 `pending`，不得填本地原文路径或裸原始目录名。
 - `c03_retrievable_count` 只在 c03 入库并可检索后填写；未完成时填 `pending`。
 - `gate_status` 取值：`pending_corpus` / `pending_desensitization` / `pending_c03` / `ready_for_model_run` / `insufficient`.
-- `ready_for_model_run` 必须以正数 `c03_retrievable_count` 为前提；只完成本地候选素材盘点或清洗脱敏前，不得把该文种标为可跑目标模型。
+- `pending_c03` 必须已有非 `pending` 的 `desensitized_batch_ref`，表示已脱敏但尚未完成 c03 可检索验证。
+- `ready_for_model_run` 必须同时具备非 `pending` 的 `desensitized_batch_ref`、非 `pending` 的 `c03_query_ref` 与正数 `c03_retrievable_count`；只完成本地候选素材盘点或清洗脱敏前，不得把该文种标为可跑目标模型。
 
 ### 模型运行
 
@@ -70,7 +73,7 @@
 `internal/draft/calibration_artifacts_test.go` 对上述 CSV 证据链设置机器闸门：
 
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名。
-- 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `c03_retrievable_count` 自洽；未取得正数 c03 可检索样例前不能进入 `ready_for_model_run`。
+- 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
 - 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 引用的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。

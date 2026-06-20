@@ -11,7 +11,8 @@ import (
 var (
 	c05SyntheticPoCEvidencePattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(fake|faked|mock|mocked|stub|stubbed|dummy|httptest|testserver|localhost|127\.0\.0\.1|::1|unit[_ -]?test|example\.com|local[-_ ]?(model|endpoint|gateway|server)|dev[-_ ]?(model|endpoint|gateway|server)|test[-_ ]?(model|endpoint|gateway|server))([^a-z0-9]|$)`)
 	c05CrossCompileOnlyEvidenceRegex = regexp.MustCompile(`(?i)(cross[-_ ]?(build|compile|compiled)|交叉编译|host[-_ ]?only|local[-_ ]?(host|runtime|machine)|dev[-_ ]?(host|machine)|localhost|127\.0\.0\.1|windows|x86_64|amd64|本机运行)`)
-	c05RawCorpusReferencePattern     = regexp.MustCompile(`各类文件`)
+	// Evidence CSVs may reference sanitized batches or c03 query ids, but never the local raw corpus directory name.
+	c05RawCorpusReferencePattern = regexp.MustCompile(`各类文件`)
 )
 
 func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
@@ -399,7 +400,7 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 		if securityLevel := row[index["content_security_level"]]; !allowedSecurityLevels[securityLevel] {
 			t.Fatalf("private model runs row %d content_security_level = %q, want 非密/敏感/涉密", rowNumber, securityLevel)
 		}
-		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || strings.Contains(c03QueryID, "各类文件") {
+		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
 			t.Fatalf("private model runs row %d c03_query_id = %q, want c03 retrieval evidence", rowNumber, c03QueryID)
 		} else {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "private model runs", "c03_query_id", rowNumber)

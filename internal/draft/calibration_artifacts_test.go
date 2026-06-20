@@ -16,7 +16,7 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 	tests := map[string][]string{
 		"c05-high-freq-doctype-calibration-candidates.csv": {
 			"doctype", "candidate_batch", "raw_package_count", "readable_package_count",
-			"c03_retrievable_count", "gate_status", "notes",
+			"desensitized_batch_ref", "c03_query_ref", "c03_retrievable_count", "gate_status", "notes",
 		},
 		"c05-high-freq-doctype-calibration-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
@@ -101,8 +101,10 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		}
 		wantDoctypes[doctype] = true
 		candidateBatch := requiredCell(t, row, index, "candidate_batch", rowNumber)
+		desensitizedBatchRef := requiredCell(t, row, index, "desensitized_batch_ref", rowNumber)
+		c03QueryRef := requiredCell(t, row, index, "c03_query_ref", rowNumber)
 		requiredCell(t, row, index, "notes", rowNumber)
-		if strings.Contains(candidateBatch, "各类文件") {
+		if c05RawCorpusReferencePattern.MatchString(candidateBatch) {
 			t.Fatalf("candidate_batch for %s exposes local raw corpus directory: %q", doctype, candidateBatch)
 		}
 		rawPackageCount, err := strconv.Atoi(row[index["raw_package_count"]])
@@ -129,9 +131,28 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 			}
 		}
 		if status == "ready_for_model_run" {
+			if strings.EqualFold(desensitizedBatchRef, "pending") {
+				t.Fatalf("gate_status ready_for_model_run for %s requires desensitized_batch_ref, got pending", doctype)
+			}
+			if strings.EqualFold(c03QueryRef, "pending") {
+				t.Fatalf("gate_status ready_for_model_run for %s requires c03_query_ref, got pending", doctype)
+			}
 			retrievableCount, err := strconv.Atoi(row[index["c03_retrievable_count"]])
 			if err != nil || retrievableCount <= 0 {
 				t.Fatalf("gate_status ready_for_model_run for %s requires positive c03_retrievable_count, got %q", doctype, row[index["c03_retrievable_count"]])
+			}
+		}
+		if status == "pending_c03" && strings.EqualFold(desensitizedBatchRef, "pending") {
+			t.Fatalf("gate_status pending_c03 for %s requires a desensitized_batch_ref before waiting on c03", doctype)
+		}
+		if !strings.EqualFold(c03QueryRef, "pending") {
+			requireNoSyntheticPoCEvidence(t, c03QueryRef, "calibration candidates", "c03_query_ref", rowNumber)
+			if c05RawCorpusReferencePattern.MatchString(c03QueryRef) {
+				t.Fatalf("c03_query_ref for %s exposes local raw corpus directory: %q", doctype, c03QueryRef)
+			}
+			retrievableCount, err := strconv.Atoi(row[index["c03_retrievable_count"]])
+			if err != nil || retrievableCount <= 0 {
+				t.Fatalf("c03_query_ref for %s requires positive c03_retrievable_count, got %q", doctype, row[index["c03_retrievable_count"]])
 			}
 		}
 		if rawPackageCount == 0 && status != "pending_corpus" && status != "insufficient" {
@@ -170,7 +191,7 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 		for _, field := range []string{"topk", "prompt_total_chars", "prompt_token_estimate"} {
 			requirePositiveIntCell(t, row, index, field, rowNumber)
 		}
-		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || strings.Contains(c03QueryID, "各类文件") {
+		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
 			t.Fatalf("calibration runs row %d c03_query_id = %q, want c03 retrieval evidence, not local/raw corpus state", rowNumber, c03QueryID)
 		} else {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "calibration runs", "c03_query_id", rowNumber)

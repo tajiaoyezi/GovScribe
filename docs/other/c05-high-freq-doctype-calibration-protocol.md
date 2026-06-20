@@ -46,6 +46,7 @@
 - `run_id` 必须唯一，并能追溯到模型输出对象或日志。
 - `c03_query_id` 必须指向 c03 检索结果；不得填本地原文路径。
 - `prompt_variant_id` 必须能说明 TopK、提示总长上限与契约措辞版本。
+- `model_endpoint_evidence_ref` 必须指向真实目标模型端点、部署清单或网关证明引用；不得为 `fake`、`mock`、`stub`、`httptest`、`localhost`、`127.0.0.1`、`unit-test` 等本地假服务或单测证据。
 - `content_security_level` 必须来自 c06 上下文，取值为 `非密` / `敏感` / `涉密`。
 - `first_token_ms` 与 `total_generation_ms` 必须来自真实运行计时；不得用估算值。
 - `output_ref` 只记录脱敏后输出引用，不记录完整正文。
@@ -70,7 +71,7 @@
 
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、文件名或 Office/PDF 原文扩展名。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `c03_retrievable_count` 自洽；未取得正数 c03 可检索样例前不能进入 `ready_for_model_run`。
-- 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据。
+- 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
 - 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 引用的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。
 - `evidence_refs` 的每个 `run:<run_id>` 必须指向同文种、已完成且同时匹配所选 TopK / 提示总长 / 契约版本的目标模型运行；每个被引用运行都必须有对应的 `review:<review_record_id>` 人工评分，且评分记录必须指向同一组运行记录。

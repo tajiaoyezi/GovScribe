@@ -22,7 +22,7 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
 			"prompt_variant_id", "topk", "prompt_total_chars", "prompt_token_estimate",
 			"contract_version", "model_provider", "model_name", "model_backend",
-			"content_security_level", "first_token_ms", "total_generation_ms",
+			"model_endpoint_evidence_ref", "content_security_level", "first_token_ms", "total_generation_ms",
 			"completion_chars", "stream_completed", "error_reason", "output_ref",
 			"review_record_id", "notes",
 		},
@@ -46,6 +46,33 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 				t.Fatalf("header = %q, want %q", got, strings.Join(want, ","))
 			}
 		})
+	}
+}
+
+func TestC05CalibrationEvidenceRejectsSyntheticTargetModelSignals(t *testing.T) {
+	rejected := []string{
+		"fake-target-model",
+		"mock-calibration-endpoint",
+		"httptest-calibration-run",
+		"http://localhost:8080/v1",
+		"http://127.0.0.1:9000/v1",
+		"unit-test-model",
+	}
+	for _, value := range rejected {
+		if !looksSyntheticPoCEvidence(value) {
+			t.Fatalf("value %q should be treated as synthetic target model evidence", value)
+		}
+	}
+
+	allowed := []string{
+		"openai-compatible-prod-gateway",
+		"deployment-evidence:target-model-gateway-20260620",
+		"model-run-audit:calibration-20260620-001",
+	}
+	for _, value := range allowed {
+		if looksSyntheticPoCEvidence(value) {
+			t.Fatalf("value %q should be allowed as non-synthetic target model evidence", value)
+		}
 	}
 }
 
@@ -130,14 +157,19 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 
 		requireISODateCell(t, row, index, "run_date", rowNumber)
 		requireKnownC05Doctype(t, requiredCell(t, row, index, "doctype", rowNumber), "calibration runs", rowNumber)
-		for _, field := range []string{"subtype", "source_sample_id", "c03_query_id", "prompt_variant_id", "contract_version", "model_provider", "model_name", "model_backend"} {
+		for _, field := range []string{"subtype", "source_sample_id", "c03_query_id", "prompt_variant_id", "contract_version", "model_provider", "model_name", "model_backend", "model_endpoint_evidence_ref"} {
 			requiredCell(t, row, index, field, rowNumber)
+		}
+		for _, field := range []string{"model_provider", "model_name", "model_backend", "model_endpoint_evidence_ref"} {
+			requireNoSyntheticPoCEvidence(t, row[index[field]], "calibration runs", field, rowNumber)
 		}
 		for _, field := range []string{"topk", "prompt_total_chars", "prompt_token_estimate"} {
 			requirePositiveIntCell(t, row, index, field, rowNumber)
 		}
 		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || strings.Contains(c03QueryID, "各类文件") {
 			t.Fatalf("calibration runs row %d c03_query_id = %q, want c03 retrieval evidence, not local/raw corpus state", rowNumber, c03QueryID)
+		} else {
+			requireNoSyntheticPoCEvidence(t, c03QueryID, "calibration runs", "c03_query_id", rowNumber)
 		}
 		if securityLevel := row[index["content_security_level"]]; !allowedSecurityLevels[securityLevel] {
 			t.Fatalf("calibration runs row %d content_security_level = %q, want 非密/敏感/涉密", rowNumber, securityLevel)
@@ -348,8 +380,9 @@ func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	}
 	rawOfficeExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)
 	fieldsAllowingSanitizedObjectExtensions := map[string]bool{
-		"output_ref":    true,
-		"evidence_refs": true,
+		"output_ref":                  true,
+		"evidence_refs":               true,
+		"model_endpoint_evidence_ref": true,
 	}
 
 	for _, name := range files {

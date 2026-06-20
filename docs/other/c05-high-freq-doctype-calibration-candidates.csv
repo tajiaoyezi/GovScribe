@@ -1,0 +1,10 @@
+doctype,candidate_batch,raw_package_count,readable_package_count,c03_retrievable_count,gate_status,notes
+通知,local-corpus-20260620,45,43,pending,pending_desensitization,本地候选素材已登记；需清洗脱敏并入 c03 后才能用于 7.3
+请示,local-corpus-20260620,10,10,pending,pending_desensitization,本地候选素材数量不足但可作为小样本实测候选
+报告,local-corpus-20260620,10,10,pending,pending_desensitization,本地候选素材数量不足但可作为小样本实测候选
+函,local-corpus-20260620,10,10,pending,pending_desensitization,本地候选素材数量不足但可作为小样本实测候选
+会议纪要,local-corpus-20260620,12,12,pending,pending_desensitization,本地候选素材数量不足但可作为小样本实测候选
+通报,local-corpus-20260620,1,1,pending,insufficient,仅 1 篇候选；不足以支撑稳定校准
+批复,local-corpus-20260620,10,10,pending,pending_desensitization,本地候选素材数量不足但可作为小样本实测候选
+讲话稿,local-corpus-20260620,0,0,pending,insufficient,本地候选素材未覆盖；需补充真实或相似公文
+方案,local-corpus-20260620,0,0,pending,pending_corpus,本地候选素材未覆盖；PDF 仅登记数量，仍需确认原文位置或 c03 入库记录

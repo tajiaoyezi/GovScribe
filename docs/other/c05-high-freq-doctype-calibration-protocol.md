@@ -60,6 +60,19 @@
 - `adoption_rate` 必须由人工评分记录计算，不能引用 7.1 种子样稿分数。
 - `median_first_token_ms` 与 `p95_total_generation_ms` 必须由目标模型运行记录计算。
 - 若某文种候选不足、未完成 c03 入库或无人工采纳标签，`pass_fail` 必须填 `blocked` 或 `insufficient_evidence`。
+- `evidence_refs` 对 `pass` / `fail` 决策必须使用分号分隔的 `run:<run_id>;review:<review_record_id>` 引用格式；被引用的运行记录和人工评分记录必须真实存在，且评分记录必须引用同一组运行记录。
+
+## 机器校验闸门
+
+`internal/draft/calibration_artifacts_test.go` 对上述 CSV 证据链设置机器闸门：
+
+- 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、文件名或 Office/PDF 原文扩展名。
+- 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据。
+- 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
+- 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 引用的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。
+- `evidence_refs` 的每个 `run:<run_id>` 必须指向同文种、已完成且同时匹配所选 TopK / 提示总长 / 契约版本的目标模型运行；每个被引用运行都必须有对应的 `review:<review_record_id>` 人工评分，且评分记录必须指向同一组运行记录。
+- 采纳率按引用评分记录中 `counts_as_adopted=true` 的占比计算，可保留两位小数；首包耗时中位数按引用运行排序后的常规中位数取整，P95 总耗时按 nearest-rank 口径计算。
+- `tasks.md` 中 7.3 只有在 9 个高频文种都存在 `pass` 校准决策时才能勾选；否则测试会失败。
 
 ## 7.3 完成门槛
 

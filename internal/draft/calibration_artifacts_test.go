@@ -52,7 +52,11 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 func TestC05CalibrationEvidenceRejectsSyntheticTargetModelSignals(t *testing.T) {
 	rejected := []string{
 		"fake-target-model",
+		"mocked-target-model",
 		"mock-calibration-endpoint",
+		"local-model-endpoint",
+		"dev-server-calibration-run",
+		"dummy-calibration-model",
 		"httptest-calibration-run",
 		"http://localhost:8080/v1",
 		"http://127.0.0.1:9000/v1",

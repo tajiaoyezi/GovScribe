@@ -34,7 +34,7 @@
 
 - `doctype` 属于 c05 9 个高频文种。
 - `deployment_scope` 必须为 `private` / `domestic` / `xinchuang_private` 之一。
-- `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock`、`stub`、`httptest`、`localhost`、`127.0.0.1`、`unit-test` 等本地假服务或单测证据。
+- `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `c03_query_id` 必须指向 c03 检索证据，不能是 `pending`、本地路径或 `各类文件/`。
 - 成功运行必须有正数 `first_token_ms`、`total_generation_ms`、`completion_chars` 和脱敏 `output_ref`；失败运行必须记录 `error_reason`。
 
@@ -61,7 +61,7 @@
 - `cpu_arch` 必须为 `loongarch64` 或 `arm64`。
 - `runtime_mode` 必须为 `target_host`，表示在目标 CPU / OS 机器上实际运行；交叉编译、Windows / x86_64 / amd64 本机运行、host-only 日志不得记为通过证据。
 - `platform_id`、`os_name`、`os_version`、`kernel_version`、`go_version`、`binary_ref`、`platform_fingerprint_ref`、`evidence_ref` 均必填。
-- `platform_fingerprint_ref` 必须能指向目标机架构、OS、内核与 Go runtime 指纹；`binary_ref`、`platform_fingerprint_ref`、`evidence_ref`、`notes` 不得使用 `cross-build`、`cross-compile`、`交叉编译`、`windows`、`x86_64`、`amd64`、`本机运行` 等仅证明非目标环境的证据。
+- `platform_fingerprint_ref` 必须能指向目标机架构、OS、内核与 Go runtime 指纹；`binary_ref`、`platform_fingerprint_ref`、`evidence_ref`、`notes` 不得使用 `cross-build`、`cross-compile`、`交叉编译`、`local-host`、`dev-machine`、`windows`、`x86_64`、`amd64`、`本机运行` 等仅证明非目标环境的证据。
 - 成功运行必须满足 `postgres_connected`、`minio_connected`、`c01_connected`、`c03_connected`、`sse_stream_completed` 均为 `true`，并记录正数 `first_token_ms` 与 `total_generation_ms`。
 - 失败运行必须记录 `error_reason`，不能伪装为通过。
 

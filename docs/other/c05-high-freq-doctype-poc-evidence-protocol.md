@@ -18,7 +18,7 @@
 - 8.1 的人工评分口径复用 7.1 rubric 四维与采纳标签，不能只记录模型连通性。
 - 8.3 必须在目标平台真实运行：龙芯 LoongArch64 至少一次，ARM64 + 麒麟至少一次。
 - 8.3 必须验证端到端依赖连通：PostgreSQL、MinIO、c01、c03、SSE 流式完成。仅交叉编译成功或本机 Windows / x86_64 运行不算通过。
-- 表内只记录脱敏后的输出引用、运行日志引用或环境证明引用，不记录 API key、原文路径、原文标题、正文或原始 Office / PDF 文件引用（如 `.doc` / `.docx` / `.pdf` / `.xlsx` / `.et`）。`output_ref`、`evidence_ref`、`evidence_refs`、`model_endpoint_evidence_ref`、`platform_fingerprint_ref` 可以指向已脱敏审计包或脱敏输出对象，但不得指向原始语料路径。
+- 表内只记录脱敏后的输出引用、运行日志引用或环境证明引用，不记录 API key、原文路径、裸 `各类文件` 目录名、原文标题、正文或原始 Office / PDF 文件引用（如 `.doc` / `.docx` / `.pdf` / `.xlsx` / `.et`）。`output_ref`、`evidence_ref`、`evidence_refs`、`model_endpoint_evidence_ref`、`platform_fingerprint_ref` 可以指向已脱敏审计包或脱敏输出对象，但不得指向原始语料路径。
 
 ## 记录文件
 

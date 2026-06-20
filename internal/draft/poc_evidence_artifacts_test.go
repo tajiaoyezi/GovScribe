@@ -11,6 +11,7 @@ import (
 var (
 	c05SyntheticPoCEvidencePattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(fake|faked|mock|mocked|stub|stubbed|dummy|httptest|testserver|localhost|127\.0\.0\.1|::1|unit[_ -]?test|example\.com|local[-_ ]?(model|endpoint|gateway|server)|dev[-_ ]?(model|endpoint|gateway|server)|test[-_ ]?(model|endpoint|gateway|server))([^a-z0-9]|$)`)
 	c05CrossCompileOnlyEvidenceRegex = regexp.MustCompile(`(?i)(cross[-_ ]?(build|compile|compiled)|交叉编译|host[-_ ]?only|local[-_ ]?(host|runtime|machine)|dev[-_ ]?(host|machine)|localhost|127\.0\.0\.1|windows|x86_64|amd64|本机运行)`)
+	c05RawCorpusReferencePattern     = regexp.MustCompile(`各类文件`)
 )
 
 func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
@@ -110,6 +111,31 @@ func TestC05PoCEvidenceRejectsCrossCompileOnlyRuntimeSignals(t *testing.T) {
 	for _, value := range allowed {
 		if looksCrossCompileOnlyEvidence(value) {
 			t.Fatalf("value %q should be allowed as target platform runtime evidence", value)
+		}
+	}
+}
+
+func TestC05EvidenceRejectsRawCorpusDirectoryReferences(t *testing.T) {
+	rejected := []string{
+		"各类文件",
+		"各类文件/",
+		"source:各类文件",
+		`H:\devlopment\code\GovScribe\各类文件`,
+	}
+	for _, value := range rejected {
+		if !c05RawCorpusReferencePattern.MatchString(value) {
+			t.Fatalf("value %q should be treated as a raw local corpus directory reference", value)
+		}
+	}
+
+	allowed := []string{
+		"local-corpus-20260620",
+		"sanitized-corpus-batch-20260620",
+		"c03-query:highfreq-notice-001",
+	}
+	for _, value := range allowed {
+		if c05RawCorpusReferencePattern.MatchString(value) {
+			t.Fatalf("value %q should be allowed as an abstract or c03 evidence reference", value)
 		}
 	}
 }
@@ -281,7 +307,7 @@ func TestC05PoCEvidenceCSVsDoNotExposeRawArtifactsOrSecrets(t *testing.T) {
 	forbidden := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)[a-z]:[\\/]`),
 		regexp.MustCompile(`^(?://|\\\\)`),
-		regexp.MustCompile(`(^|[\\/])各类文件[\\/]`),
+		c05RawCorpusReferencePattern,
 		regexp.MustCompile(`正文-`),
 		regexp.MustCompile(`(?i)(api[_-]?key|sk-[a-z0-9])`),
 	}

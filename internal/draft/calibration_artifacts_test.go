@@ -379,7 +379,7 @@ func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	forbiddenEverywhere := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)[a-z]:[\\/]`),
 		regexp.MustCompile(`^(?://|\\\\)`),
-		regexp.MustCompile(`(^|[\\/])各类文件[\\/]`),
+		c05RawCorpusReferencePattern,
 		regexp.MustCompile(`正文-`),
 	}
 	rawOfficeExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)

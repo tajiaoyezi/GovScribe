@@ -35,7 +35,7 @@
 - `doctype` 属于 c05 9 个高频文种。
 - `deployment_scope` 必须为 `private` / `domestic` / `xinchuang_private` 之一。
 - `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
-- `c03_query_id` 必须指向 c03 检索证据，不能是 `pending`、本地路径或 `各类文件/`。
+- `c03_query_id` 必须指向 c03 检索证据，且必须匹配同文种候选素材表中 `gate_status=ready_for_model_run` 的 `c03_query_ref`；不能是 `pending`、本地路径或 `各类文件/`。
 - 成功运行必须有正数 `first_token_ms`、`total_generation_ms`、`completion_chars` 和脱敏 `output_ref`；失败运行必须记录 `error_reason`。
 
 `private-model-reviews.csv` 一旦填写，必须满足：

@@ -181,6 +181,7 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 }
 
 func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
+	readyC03Queries := readReadyC05CalibrationCandidateQueries(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-runs.csv")
 	index := csvIndex(header)
 	seenRunIDs := map[string]bool{}
@@ -195,7 +196,8 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 		seenRunIDs[runID] = true
 
 		requireISODateCell(t, row, index, "run_date", rowNumber)
-		requireKnownC05Doctype(t, requiredCell(t, row, index, "doctype", rowNumber), "calibration runs", rowNumber)
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		requireKnownC05Doctype(t, doctype, "calibration runs", rowNumber)
 		for _, field := range []string{"subtype", "source_sample_id", "c03_query_id", "prompt_variant_id", "contract_version", "model_provider", "model_name", "model_backend", "model_endpoint_evidence_ref"} {
 			requiredCell(t, row, index, field, rowNumber)
 		}
@@ -209,6 +211,7 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 			t.Fatalf("calibration runs row %d c03_query_id = %q, want c03 retrieval evidence, not local/raw corpus state", rowNumber, c03QueryID)
 		} else {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "calibration runs", "c03_query_id", rowNumber)
+			requireReadyC05CalibrationCandidateQuery(t, readyC03Queries, doctype, c03QueryID, "calibration runs", rowNumber)
 		}
 		if securityLevel := row[index["content_security_level"]]; !allowedSecurityLevels[securityLevel] {
 			t.Fatalf("calibration runs row %d content_security_level = %q, want 非密/敏感/涉密", rowNumber, securityLevel)
@@ -451,6 +454,37 @@ func c05HighFreqDoctypeSeen() map[string]bool {
 	return map[string]bool{
 		"通知": false, "请示": false, "报告": false, "函": false, "会议纪要": false,
 		"通报": false, "批复": false, "讲话稿": false, "方案": false,
+	}
+}
+
+func readReadyC05CalibrationCandidateQueries(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-candidates.csv")
+	index := csvIndex(header)
+	queriesByDoctype := map[string]map[string]bool{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		requireKnownC05Doctype(t, doctype, "calibration candidates", rowNumber)
+		if row[index["gate_status"]] != "ready_for_model_run" {
+			continue
+		}
+		c03QueryRef := requiredCell(t, row, index, "c03_query_ref", rowNumber)
+		if strings.EqualFold(c03QueryRef, "pending") {
+			t.Fatalf("calibration candidates row %d is ready_for_model_run but c03_query_ref is pending", rowNumber)
+		}
+		if queriesByDoctype[doctype] == nil {
+			queriesByDoctype[doctype] = map[string]bool{}
+		}
+		queriesByDoctype[doctype][c03QueryRef] = true
+	}
+	return queriesByDoctype
+}
+
+func requireReadyC05CalibrationCandidateQuery(t *testing.T, readyQueries map[string]map[string]bool, doctype, c03QueryID, source string, rowNumber int) {
+	t.Helper()
+	if !readyQueries[doctype][c03QueryID] {
+		t.Fatalf("%s row %d c03_query_id = %q has no matching ready_for_model_run candidate for %s", source, rowNumber, c03QueryID, doctype)
 	}
 }
 

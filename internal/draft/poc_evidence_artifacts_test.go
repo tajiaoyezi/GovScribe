@@ -8,13 +8,18 @@ import (
 	"testing"
 )
 
+var (
+	c05SyntheticPoCEvidencePattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(fake|mock|stub|httptest|testserver|localhost|127\.0\.0\.1|::1|unit[_ -]?test|example\.com)([^a-z0-9]|$)`)
+	c05CrossCompileOnlyEvidenceRegex = regexp.MustCompile(`(?i)(cross[-_ ]?(build|compile|compiled)|交叉编译|host[-_ ]?only|localhost|127\.0\.0\.1|windows|x86_64|amd64|本机运行)`)
+)
+
 func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
 	tests := map[string][]string{
 		"c05-high-freq-doctype-private-model-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "model_provider", "model_name",
-			"model_backend", "deployment_scope", "content_security_level", "c03_query_id",
-			"prompt_variant_id", "topk", "prompt_total_chars", "contract_version",
-			"first_token_ms", "total_generation_ms", "completion_chars",
+			"model_backend", "model_endpoint_evidence_ref", "deployment_scope",
+			"content_security_level", "c03_query_id", "prompt_variant_id", "topk",
+			"prompt_total_chars", "contract_version", "first_token_ms", "total_generation_ms", "completion_chars",
 			"stream_completed", "error_reason", "output_ref", "review_record_id", "notes",
 		},
 		"c05-high-freq-doctype-private-model-reviews.csv": {
@@ -29,10 +34,10 @@ func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
 		},
 		"c05-high-freq-doctype-xinchuang-runtime-runs.csv": {
 			"run_id", "run_date", "platform_id", "cpu_arch", "os_name", "os_version",
-			"kernel_version", "go_version", "binary_ref", "postgres_connected",
-			"minio_connected", "c01_connected", "c03_connected", "sse_stream_completed",
-			"first_token_ms", "total_generation_ms", "error_reason", "evidence_ref",
-			"operator", "notes",
+			"kernel_version", "go_version", "binary_ref", "runtime_mode",
+			"platform_fingerprint_ref", "postgres_connected", "minio_connected", "c01_connected",
+			"c03_connected", "sse_stream_completed", "first_token_ms", "total_generation_ms",
+			"error_reason", "evidence_ref", "operator", "notes",
 		},
 		"c05-high-freq-doctype-xinchuang-runtime-decisions.csv": {
 			"decision_id", "decision_date", "platform_id", "cpu_arch", "os_name",
@@ -47,6 +52,59 @@ func TestC05PoCEvidenceCSVHeadersStayAuditable(t *testing.T) {
 				t.Fatalf("header = %q, want %q", got, strings.Join(want, ","))
 			}
 		})
+	}
+}
+
+func TestC05PoCEvidenceRejectsSyntheticPrivateModelSignals(t *testing.T) {
+	rejected := []string{
+		"fake-provider",
+		"local_stub_gateway",
+		"httptest-model-endpoint",
+		"http://localhost:8080/v1",
+		"http://127.0.0.1:9000/v1",
+		"unit-test-run",
+	}
+	for _, value := range rejected {
+		if !looksSyntheticPoCEvidence(value) {
+			t.Fatalf("value %q should be treated as synthetic private model evidence", value)
+		}
+	}
+
+	allowed := []string{
+		"qwen-vllm-private-gateway",
+		"deployment-evidence:private-model-gateway-20260620",
+		"domestic-provider-audit:run-20260620-001",
+	}
+	for _, value := range allowed {
+		if looksSyntheticPoCEvidence(value) {
+			t.Fatalf("value %q should be allowed as non-synthetic private model evidence", value)
+		}
+	}
+}
+
+func TestC05PoCEvidenceRejectsCrossCompileOnlyRuntimeSignals(t *testing.T) {
+	rejected := []string{
+		"cross-build-log:loongarch64",
+		"cross_compile_artifact_only",
+		"仅交叉编译未上机",
+		"windows-amd64-host-only",
+		"本机运行记录",
+	}
+	for _, value := range rejected {
+		if !looksCrossCompileOnlyEvidence(value) {
+			t.Fatalf("value %q should be treated as cross-compile/local-host runtime evidence", value)
+		}
+	}
+
+	allowed := []string{
+		"platform-fingerprint:kylin-arm64-uname-audit-20260620",
+		"runtime-log:loongarch64-target-host-sse-pass",
+		"binary:govscribe-linux-loongarch64-20260620",
+	}
+	for _, value := range allowed {
+		if looksCrossCompileOnlyEvidence(value) {
+			t.Fatalf("value %q should be allowed as target platform runtime evidence", value)
+		}
 	}
 }
 
@@ -222,6 +280,13 @@ func TestC05PoCEvidenceCSVsDoNotExposeRawArtifactsOrSecrets(t *testing.T) {
 		regexp.MustCompile(`(?i)(api[_-]?key|sk-[a-z0-9])`),
 	}
 	rawOfficeExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)
+	fieldsAllowingSanitizedObjectExtensions := map[string]bool{
+		"output_ref":                  true,
+		"evidence_ref":                true,
+		"evidence_refs":               true,
+		"model_endpoint_evidence_ref": true,
+		"platform_fingerprint_ref":    true,
+	}
 	for _, name := range files {
 		t.Run(name, func(t *testing.T) {
 			header, rows := readCalibrationCSV(t, name)
@@ -232,8 +297,12 @@ func TestC05PoCEvidenceCSVsDoNotExposeRawArtifactsOrSecrets(t *testing.T) {
 							t.Fatalf("%s row %d col %d contains forbidden raw artifact or secret reference %q", name, rowIndex, colIndex, cell)
 						}
 					}
-					if rawOfficeExtension.MatchString(cell) {
-						t.Fatalf("%s row %d col %d contains raw office/PDF artifact extension %q", name, rowIndex, colIndex, cell)
+					field := ""
+					if colIndex < len(header) {
+						field = header[colIndex]
+					}
+					if rawOfficeExtension.MatchString(cell) && !fieldsAllowingSanitizedObjectExtensions[field] {
+						t.Fatalf("%s row %d field %q contains office/PDF extension outside sanitized evidence reference fields: %q", name, rowIndex, field, cell)
 					}
 				}
 			}
@@ -289,8 +358,8 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 		requireISODateCell(t, row, index, "run_date", rowNumber)
 		doctype := requiredCell(t, row, index, "doctype", rowNumber)
 		requireKnownC05Doctype(t, doctype, "private model runs", rowNumber)
-		for _, field := range []string{"subtype", "model_provider", "model_name", "model_backend", "prompt_variant_id", "contract_version"} {
-			requiredCell(t, row, index, field, rowNumber)
+		for _, field := range []string{"subtype", "model_provider", "model_name", "model_backend", "model_endpoint_evidence_ref", "prompt_variant_id", "contract_version"} {
+			requireNoSyntheticPoCEvidence(t, requiredCell(t, row, index, field, rowNumber), "private model runs", field, rowNumber)
 		}
 		if scope := row[index["deployment_scope"]]; !allowedDeploymentScopes[scope] {
 			t.Fatalf("private model runs row %d deployment_scope = %q, want private/domestic/xinchuang_private", rowNumber, scope)
@@ -300,6 +369,8 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 		}
 		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || strings.Contains(c03QueryID, "各类文件") {
 			t.Fatalf("private model runs row %d c03_query_id = %q, want c03 retrieval evidence", rowNumber, c03QueryID)
+		} else {
+			requireNoSyntheticPoCEvidence(t, c03QueryID, "private model runs", "c03_query_id", rowNumber)
 		}
 		for _, field := range []string{"topk", "prompt_total_chars"} {
 			requirePositiveIntCell(t, row, index, field, rowNumber)
@@ -315,7 +386,7 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 			if errorReason := strings.TrimSpace(row[index["error_reason"]]); errorReason != "" {
 				t.Fatalf("private model runs row %d succeeded but error_reason = %q", rowNumber, errorReason)
 			}
-			requiredCell(t, row, index, "output_ref", rowNumber)
+			requireNoSyntheticPoCEvidence(t, requiredCell(t, row, index, "output_ref", rowNumber), "private model runs", "output_ref", rowNumber)
 		} else {
 			requiredCell(t, row, index, "error_reason", rowNumber)
 			for _, field := range []string{"first_token_ms", "total_generation_ms", "completion_chars"} {
@@ -402,11 +473,17 @@ func readC05XinchuangRuntimeRuns(t *testing.T) map[string]c05XinchuangRuntimeRun
 		}
 		seenRunIDs[runID] = true
 		requireISODateCell(t, row, index, "run_date", rowNumber)
-		for _, field := range []string{"platform_id", "cpu_arch", "os_name", "os_version", "kernel_version", "go_version", "binary_ref", "evidence_ref", "operator", "notes"} {
+		for _, field := range []string{"platform_id", "cpu_arch", "os_name", "os_version", "kernel_version", "go_version", "binary_ref", "runtime_mode", "platform_fingerprint_ref", "evidence_ref", "operator", "notes"} {
 			requiredCell(t, row, index, field, rowNumber)
 		}
 		if !allowedArch[row[index["cpu_arch"]]] {
 			t.Fatalf("xinchuang runs row %d cpu_arch = %q, want loongarch64 or arm64", rowNumber, row[index["cpu_arch"]])
+		}
+		if runtimeMode := row[index["runtime_mode"]]; runtimeMode != "target_host" {
+			t.Fatalf("xinchuang runs row %d runtime_mode = %q, want target_host", rowNumber, runtimeMode)
+		}
+		for _, field := range []string{"binary_ref", "platform_fingerprint_ref", "evidence_ref", "notes"} {
+			requireNoCrossCompileOnlyEvidence(t, row[index[field]], "xinchuang runs", field, rowNumber)
 		}
 		postgresConnected := requireBoolCell(t, row, index, "postgres_connected", rowNumber)
 		minioConnected := requireBoolCell(t, row, index, "minio_connected", rowNumber)
@@ -463,6 +540,28 @@ func requireFloatRangeCell(t *testing.T, row []string, index map[string]int, fie
 		t.Fatalf("row %d field %s = %.4f, want %.4f..%.4f", rowNumber, field, parsed, min, max)
 	}
 	return parsed
+}
+
+func requireNoSyntheticPoCEvidence(t *testing.T, value, source, field string, rowNumber int) {
+	t.Helper()
+	if looksSyntheticPoCEvidence(value) {
+		t.Fatalf("%s row %d field %s = %q looks like local/fake evidence, want real private/domestic model evidence", source, rowNumber, field, value)
+	}
+}
+
+func requireNoCrossCompileOnlyEvidence(t *testing.T, value, source, field string, rowNumber int) {
+	t.Helper()
+	if looksCrossCompileOnlyEvidence(value) {
+		t.Fatalf("%s row %d field %s = %q looks like cross-compile/local-host evidence, want target platform runtime evidence", source, rowNumber, field, value)
+	}
+}
+
+func looksSyntheticPoCEvidence(value string) bool {
+	return c05SyntheticPoCEvidencePattern.MatchString(value)
+}
+
+func looksCrossCompileOnlyEvidence(value string) bool {
+	return c05CrossCompileOnlyEvidenceRegex.MatchString(value)
 }
 
 func requireBoolCell(t *testing.T, row []string, index map[string]int, field string, rowNumber int) bool {

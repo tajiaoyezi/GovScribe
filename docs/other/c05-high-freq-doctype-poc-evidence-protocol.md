@@ -18,7 +18,7 @@
 - 8.1 的人工评分口径复用 7.1 rubric 四维与采纳标签，不能只记录模型连通性。
 - 8.3 必须在目标平台真实运行：龙芯 LoongArch64 至少一次，ARM64 + 麒麟至少一次。
 - 8.3 必须验证端到端依赖连通：PostgreSQL、MinIO、c01、c03、SSE 流式完成。仅交叉编译成功或本机 Windows / x86_64 运行不算通过。
-- 表内只记录脱敏后的输出引用、运行日志引用或环境证明引用，不记录 API key、原文路径、原文标题、正文或原始 Office / PDF 文件引用（如 `.doc` / `.docx` / `.pdf` / `.xlsx` / `.et`）。
+- 表内只记录脱敏后的输出引用、运行日志引用或环境证明引用，不记录 API key、原文路径、原文标题、正文或原始 Office / PDF 文件引用（如 `.doc` / `.docx` / `.pdf` / `.xlsx` / `.et`）。`output_ref`、`evidence_ref`、`evidence_refs`、`model_endpoint_evidence_ref`、`platform_fingerprint_ref` 可以指向已脱敏审计包或脱敏输出对象，但不得指向原始语料路径。
 
 ## 记录文件
 
@@ -34,6 +34,7 @@
 
 - `doctype` 属于 c05 9 个高频文种。
 - `deployment_scope` 必须为 `private` / `domestic` / `xinchuang_private` 之一。
+- `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock`、`stub`、`httptest`、`localhost`、`127.0.0.1`、`unit-test` 等本地假服务或单测证据。
 - `c03_query_id` 必须指向 c03 检索证据，不能是 `pending`、本地路径或 `各类文件/`。
 - 成功运行必须有正数 `first_token_ms`、`total_generation_ms`、`completion_chars` 和脱敏 `output_ref`；失败运行必须记录 `error_reason`。
 
@@ -58,7 +59,9 @@
 `xinchuang-runtime-runs.csv` 一旦填写，必须满足：
 
 - `cpu_arch` 必须为 `loongarch64` 或 `arm64`。
-- `platform_id`、`os_name`、`os_version`、`kernel_version`、`go_version`、`binary_ref`、`evidence_ref` 均必填。
+- `runtime_mode` 必须为 `target_host`，表示在目标 CPU / OS 机器上实际运行；交叉编译、Windows / x86_64 / amd64 本机运行、host-only 日志不得记为通过证据。
+- `platform_id`、`os_name`、`os_version`、`kernel_version`、`go_version`、`binary_ref`、`platform_fingerprint_ref`、`evidence_ref` 均必填。
+- `platform_fingerprint_ref` 必须能指向目标机架构、OS、内核与 Go runtime 指纹；`binary_ref`、`platform_fingerprint_ref`、`evidence_ref`、`notes` 不得使用 `cross-build`、`cross-compile`、`交叉编译`、`windows`、`x86_64`、`amd64`、`本机运行` 等仅证明非目标环境的证据。
 - 成功运行必须满足 `postgres_connected`、`minio_connected`、`c01_connected`、`c03_connected`、`sse_stream_completed` 均为 `true`，并记录正数 `first_token_ms` 与 `total_generation_ms`。
 - 失败运行必须记录 `error_reason`，不能伪装为通过。
 

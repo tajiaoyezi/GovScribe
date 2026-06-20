@@ -155,6 +155,20 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 				t.Fatalf("c03_query_ref for %s requires positive c03_retrievable_count, got %q", doctype, row[index["c03_retrievable_count"]])
 			}
 		}
+		if !strings.EqualFold(desensitizedBatchRef, "pending") {
+			if !strings.HasPrefix(desensitizedBatchRef, "sanitized-batch:") {
+				t.Fatalf("desensitized_batch_ref for %s = %q, want sanitized-batch:<batch-id>", doctype, desensitizedBatchRef)
+			}
+			requireNoSyntheticPoCEvidence(t, desensitizedBatchRef, "calibration candidates", "desensitized_batch_ref", rowNumber)
+		}
+		if status == "pending_c03" {
+			if !strings.EqualFold(c03QueryRef, "pending") {
+				t.Fatalf("gate_status pending_c03 for %s requires c03_query_ref=pending, got %q", doctype, c03QueryRef)
+			}
+			if got := row[index["c03_retrievable_count"]]; !strings.EqualFold(got, "pending") {
+				t.Fatalf("gate_status pending_c03 for %s requires c03_retrievable_count=pending, got %q", doctype, got)
+			}
+		}
 		if rawPackageCount == 0 && status != "pending_corpus" && status != "insufficient" {
 			t.Fatalf("gate_status for %s = %q with zero raw candidates, want pending_corpus or insufficient", doctype, status)
 		}

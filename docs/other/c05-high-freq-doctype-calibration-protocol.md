@@ -37,11 +37,11 @@
 - `doctype` 必须属于 c05 9 个高频文种。
 - `raw_package_count` 与 `readable_package_count` 只登记数量，不登记原文标题或正文。
 - `readable_package_count` 不得大于 `raw_package_count`；二者为 0 时，`gate_status` 只能为 `pending_corpus` 或 `insufficient`。
-- `desensitized_batch_ref` 只记录脱敏后样本批次引用；未完成脱敏前填 `pending`，不得记录本地路径、原始目录名、文件名或正文标题。
+- `desensitized_batch_ref` 只记录脱敏后样本批次引用；未完成脱敏前填 `pending`，完成后必须使用 `sanitized-batch:<batch-id>` 格式，不得记录本地路径、原始目录名、文件名或正文标题。
 - `c03_query_ref` 只记录 c03 可检索样例的查询 / 批次引用；未完成 c03 入库前填 `pending`，不得填本地原文路径或裸原始目录名。
 - `c03_retrievable_count` 只在 c03 入库并可检索后填写；未完成时填 `pending`。
 - `gate_status` 取值：`pending_corpus` / `pending_desensitization` / `pending_c03` / `ready_for_model_run` / `insufficient`.
-- `pending_c03` 必须已有非 `pending` 的 `desensitized_batch_ref`，表示已脱敏但尚未完成 c03 可检索验证。
+- `pending_c03` 必须已有非 `pending` 的 `desensitized_batch_ref`，且 `c03_query_ref` / `c03_retrievable_count` 仍为 `pending`，表示已脱敏但尚未完成 c03 可检索验证。
 - `ready_for_model_run` 必须同时具备非 `pending` 的 `desensitized_batch_ref`、非 `pending` 的 `c03_query_ref` 与正数 `c03_retrievable_count`；只完成本地候选素材盘点或清洗脱敏前，不得把该文种标为可跑目标模型。
 
 ### 模型运行

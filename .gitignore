@@ -19,3 +19,6 @@ frontend/*.tsbuildinfo
 # Logs and local env
 *.log
 .env
+
+# Local customer/example document corpus; keep raw originals out of git.
+各类文件/

@@ -1,0 +1,1 @@
+run_id,run_date,doctype,subtype,model_provider,model_name,model_backend,deployment_scope,content_security_level,c03_query_id,prompt_variant_id,topk,prompt_total_chars,contract_version,first_token_ms,total_generation_ms,completion_chars,stream_completed,error_reason,output_ref,review_record_id,notes

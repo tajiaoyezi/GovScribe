@@ -1,0 +1,1 @@
+decision_id,decision_date,doctype,subtype,selected_topk,selected_prompt_total_chars,selected_contract_version,run_count,adoption_rate,median_first_token_ms,p95_total_generation_ms,pass_fail,decision_owner,evidence_refs,notes

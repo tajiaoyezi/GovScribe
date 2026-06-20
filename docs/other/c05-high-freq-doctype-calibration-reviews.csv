@@ -1,0 +1,1 @@
+review_record_id,run_id,reviewer,review_date,doctype_norm_score,structure_score,direction_score,organ_tone_score,adoption_status,counts_as_adopted,revision_effort_minutes,notes

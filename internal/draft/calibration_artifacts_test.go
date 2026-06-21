@@ -24,6 +24,12 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 			"readable_gap_to_100", "intake_stage", "next_c03_gate", "desensitization_owner",
 			"c03_ingestion_owner", "readiness_code",
 		},
+		"c05-high-freq-doctype-local-package-audit.csv": {
+			"doctype", "candidate_batch", "source_group_ref", "raw_package_count",
+			"direct_extractable_package_count", "conversion_required_package_count",
+			"blocked_package_count", "readable_package_count", "readable_gap_to_100",
+			"package_audit_status", "package_audit_code",
+		},
 		"c05-high-freq-doctype-calibration-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
 			"prompt_variant_id", "topk", "prompt_total_chars", "prompt_token_estimate",
@@ -221,6 +227,96 @@ func c05CandidateGateCodeFor(status string, rawPackageCount, readablePackageCoun
 		return "ready_for_model_run"
 	default:
 		return "missing_corpus"
+	}
+}
+
+func TestC05LocalPackageAuditExplainsReadableCandidateCounts(t *testing.T) {
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-local-package-audit.csv")
+	if len(rows) != 9 {
+		t.Fatalf("local package audit rows = %d, want 9 high-frequency doctypes", len(rows))
+	}
+
+	index := csvIndex(header)
+	candidateSummaries := readC05CalibrationCandidateSummaries(t)
+	wantDoctypes := c05HighFreqDoctypeSeen()
+	allowedAuditStatus := map[string]bool{
+		"ready_for_desensitization": true,
+		"needs_more_corpus":         true,
+		"missing_corpus":            true,
+	}
+	allowedAuditCodes := map[string]bool{
+		"all_packages_extractable":   true,
+		"partial_extraction_blocked": true,
+		"missing_corpus":             true,
+	}
+
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		if _, ok := wantDoctypes[doctype]; !ok {
+			t.Fatalf("unexpected doctype %q in local package audit", doctype)
+		}
+		wantDoctypes[doctype] = true
+
+		candidateSummary, ok := candidateSummaries[doctype]
+		if !ok {
+			t.Fatalf("local package audit row %d has no matching calibration candidate row for %s", rowNumber, doctype)
+		}
+		if got := requiredCell(t, row, index, "candidate_batch", rowNumber); got != candidateSummary.candidateBatch {
+			t.Fatalf("local package audit row %d candidate_batch = %q, want %q from calibration candidates", rowNumber, got, candidateSummary.candidateBatch)
+		}
+		requiredCell(t, row, index, "source_group_ref", rowNumber)
+
+		rawPackageCount := requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber)
+		directExtractableCount := requireNonNegativeIntCell(t, row, index, "direct_extractable_package_count", rowNumber)
+		conversionRequiredCount := requireNonNegativeIntCell(t, row, index, "conversion_required_package_count", rowNumber)
+		blockedPackageCount := requireNonNegativeIntCell(t, row, index, "blocked_package_count", rowNumber)
+		readablePackageCount := requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber)
+		if rawPackageCount != candidateSummary.rawPackageCount || readablePackageCount != candidateSummary.readablePackageCount {
+			t.Fatalf("local package audit row %d counts raw/readable = %d/%d, want %d/%d from calibration candidates", rowNumber, rawPackageCount, readablePackageCount, candidateSummary.rawPackageCount, candidateSummary.readablePackageCount)
+		}
+		if directExtractableCount+conversionRequiredCount != readablePackageCount {
+			t.Fatalf("local package audit row %d direct+conversion = %d, want readable_package_count %d", rowNumber, directExtractableCount+conversionRequiredCount, readablePackageCount)
+		}
+		if directExtractableCount+conversionRequiredCount+blockedPackageCount != rawPackageCount {
+			t.Fatalf("local package audit row %d direct+conversion+blocked = %d, want raw_package_count %d", rowNumber, directExtractableCount+conversionRequiredCount+blockedPackageCount, rawPackageCount)
+		}
+		readableGap := requireNonNegativeIntCell(t, row, index, "readable_gap_to_100", rowNumber)
+		wantGap := 100 - readablePackageCount
+		if wantGap < 0 {
+			wantGap = 0
+		}
+		if readableGap != wantGap {
+			t.Fatalf("local package audit row %d readable_gap_to_100 = %d, want %d", rowNumber, readableGap, wantGap)
+		}
+		status := requiredCell(t, row, index, "package_audit_status", rowNumber)
+		if !allowedAuditStatus[status] {
+			t.Fatalf("local package audit row %d package_audit_status = %q, want known status", rowNumber, status)
+		}
+		code := requiredCell(t, row, index, "package_audit_code", rowNumber)
+		if !allowedAuditCodes[code] {
+			t.Fatalf("local package audit row %d package_audit_code = %q, want controlled audit code", rowNumber, code)
+		}
+		if rawPackageCount == 0 {
+			if status != "missing_corpus" || code != "missing_corpus" || readablePackageCount != 0 || blockedPackageCount != 0 {
+				t.Fatalf("local package audit row %d missing corpus counts/status/code are inconsistent", rowNumber)
+			}
+			continue
+		}
+		if blockedPackageCount > 0 && code != "partial_extraction_blocked" {
+			t.Fatalf("local package audit row %d blocked_package_count = %d requires partial_extraction_blocked code", rowNumber, blockedPackageCount)
+		}
+		if blockedPackageCount == 0 && readablePackageCount == rawPackageCount && code != "all_packages_extractable" {
+			t.Fatalf("local package audit row %d all packages extractable requires all_packages_extractable code", rowNumber)
+		}
+		if readablePackageCount == 0 {
+			t.Fatalf("local package audit row %d has raw packages but no readable packages", rowNumber)
+		}
+	}
+	for doctype, seen := range wantDoctypes {
+		if !seen {
+			t.Fatalf("missing c05 local package audit row for %s", doctype)
+		}
 	}
 }
 
@@ -733,6 +829,7 @@ func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	files := []string{
 		"c05-high-freq-doctype-calibration-candidates.csv",
 		"c05-high-freq-doctype-corpus-intake-readiness.csv",
+		"c05-high-freq-doctype-local-package-audit.csv",
 		"c05-high-freq-doctype-calibration-variants.csv",
 		"c05-high-freq-doctype-calibration-runs.csv",
 		"c05-high-freq-doctype-calibration-reviews.csv",

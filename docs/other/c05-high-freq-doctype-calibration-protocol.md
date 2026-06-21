@@ -27,6 +27,7 @@
 
 - `docs/other/c05-high-freq-doctype-calibration-candidates.csv`：候选素材与 c03 入库状态；只记录聚合数量、抽象批次、c03 gate 与受控 candidate gate code，不记录自由文本说明。
 - `docs/other/c05-high-freq-doctype-corpus-intake-readiness.csv`：原始候选素材到清洗 / 脱敏 / c03 入库的准备清单；只记录抽象批次、聚合数量、缺口、责任状态、下一步 gate 与受控 readiness code，不记录本地路径、原始文件名、正文标题或自由文本说明。
+- `docs/other/c05-high-freq-doctype-local-package-audit.csv`：本地候选公文包的聚合可抽取性审计；只记录抽象批次、抽象来源分组、直接可抽取 / 需转换 / 阻塞数量与受控 audit code，用于解释候选素材表中的 raw/readable 差异。
 - `docs/other/c05-high-freq-doctype-calibration-variants.csv`：校准候选提示变体矩阵。
 - `docs/other/c05-high-freq-doctype-calibration-runs.csv`：目标模型运行记录。
 - `docs/other/c05-high-freq-doctype-calibration-reviews.csv`：人工评分与采纳标签。
@@ -60,6 +61,17 @@
 - `missing_corpus` 表示当前批次未覆盖该文种，必须先补齐原文或确认已有脱敏入库批次。
 - `desensitization_owner` 与 `c03_ingestion_owner` 必须显式登记责任状态；未定责时填“待实施侧确认”，不得留空。
 - `readiness_code` 只允许 `has_readable_candidates` / `low_sample_count` / `missing_corpus` 三类受控代码，不得使用自由文本记录原始标题、正文片段或文件名。
+
+### 本地候选包审计
+
+- `doctype` 必须覆盖 c05 9 个高频文种，且每个文种只记录聚合数量与抽象来源分组。
+- `candidate_batch`、`source_group_ref`、`raw_package_count`、`readable_package_count` 与 `readable_gap_to_100` 必须与候选素材表 / 语料入库准备清单保持一致，不得在包级审计中单独抬高或改写候选数量。
+- `direct_extractable_package_count` 记录无需额外转换即可进入清洗 / 脱敏前抽取队列的候选包数量；`conversion_required_package_count` 记录需要先做格式转换的候选包数量；`blocked_package_count` 记录当前批次有原始候选但尚不能进入抽取队列的数量。
+- `direct_extractable_package_count + conversion_required_package_count` 必须等于 `readable_package_count`。
+- `direct_extractable_package_count + conversion_required_package_count + blocked_package_count` 必须等于 `raw_package_count`。
+- `package_audit_status` 取值：`ready_for_desensitization` / `needs_more_corpus` / `missing_corpus`，必须与入库准备清单的 `intake_stage` 同口径。
+- `package_audit_code` 只允许 `all_packages_extractable` / `partial_extraction_blocked` / `missing_corpus` 三类受控代码；存在 `blocked_package_count > 0` 时必须使用 `partial_extraction_blocked`，不得用自由文本说明原始标题、正文片段或文件名。
+- 本审计只解释本地候选素材 raw/readable 差异，不代表已完成脱敏、c03 入库或目标模型实测；不得将 `package_audit_status=ready_for_desensitization` 误用为 `ready_for_model_run`。
 
 ### 提示变体矩阵
 
@@ -104,6 +116,7 @@
 
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；`candidate_gate_code` 必须为受控代码并与 `gate_status` / 数量自洽，不得用自由文本说明替代。
 - 语料入库准备清单必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其 `readable_gap_to_100`、`intake_stage` 与 `next_c03_gate` 必须自洽，避免把原始候选目录误当作已脱敏 / 已入 c03 的模型运行前置证据。
+- 本地候选包审计必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其直接可抽取 / 需转换 / 阻塞数量必须能反算候选素材表中的 raw/readable 数量，避免“同一公文包多文件容器”或“有原文但抽取阻塞”造成数量口径漂移。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
 - 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。

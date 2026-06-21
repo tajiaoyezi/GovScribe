@@ -26,6 +26,7 @@
 ## 记录文件
 
 - `docs/other/c05-high-freq-doctype-calibration-candidates.csv`：候选素材与 c03 入库状态。
+- `docs/other/c05-high-freq-doctype-corpus-intake-readiness.csv`：原始候选素材到清洗 / 脱敏 / c03 入库的准备清单；只记录抽象批次、聚合数量、缺口、责任状态与下一步 gate，不记录本地路径、原始文件名或正文标题。
 - `docs/other/c05-high-freq-doctype-calibration-variants.csv`：校准候选提示变体矩阵。
 - `docs/other/c05-high-freq-doctype-calibration-runs.csv`：目标模型运行记录。
 - `docs/other/c05-high-freq-doctype-calibration-reviews.csv`：人工评分与采纳标签。
@@ -44,6 +45,18 @@
 - `gate_status` 取值：`pending_corpus` / `pending_desensitization` / `pending_c03` / `ready_for_model_run` / `insufficient`.
 - `pending_c03` 必须已有非 `pending` 的 `desensitized_batch_ref`，且 `c03_query_ref` / `c03_retrievable_count` 仍为 `pending`，表示已脱敏但尚未完成 c03 可检索验证。
 - `ready_for_model_run` 必须同时具备非 `pending` 的 `desensitized_batch_ref`、非 `pending` 的 `c03_query_ref` 与正数 `c03_retrievable_count`；只完成本地候选素材盘点或清洗脱敏前，不得把该文种标为可跑目标模型。
+
+### 语料入库准备清单
+
+- `doctype` 必须覆盖 c05 9 个高频文种，且每个文种只记录聚合数量与抽象来源分组。
+- `candidate_batch` 与 `source_group_ref` 只能使用抽象批次 / 分组引用，不得记录本地原始目录、原始文件名、正文标题或 Office / PDF 原文扩展名。
+- `readable_gap_to_100` 必须按 `max(0, 100 - readable_package_count)` 计算，便于实施侧判断距离 `<100` 稀缺线的缺口。
+- `intake_stage` 取值：`ready_for_desensitization` / `needs_more_corpus` / `missing_corpus`。
+- `next_c03_gate` 取值：`pending_desensitization` / `pending_corpus` / `insufficient`，必须与候选数量和 `intake_stage` 自洽。
+- `ready_for_desensitization` 表示已有可抽取候选包，下一步先由清洗 / 脱敏责任方产出脱敏批次，再进入 c03 入库验证；它不代表已经可跑目标模型。
+- `needs_more_corpus` 表示有少量候选但不足以支撑稳定校准，仍需补充素材。
+- `missing_corpus` 表示当前批次未覆盖该文种，必须先补齐原文或确认已有脱敏入库批次。
+- `desensitization_owner` 与 `c03_ingestion_owner` 必须显式登记责任状态；未定责时填“待实施侧确认”，不得留空。
 
 ### 提示变体矩阵
 
@@ -87,6 +100,7 @@
 `internal/draft/calibration_artifacts_test.go` 对上述 CSV 证据链设置机器闸门：
 
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名。
+- 语料入库准备清单必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其 `readable_gap_to_100`、`intake_stage` 与 `next_c03_gate` 必须自洽，避免把原始候选目录误当作已脱敏 / 已入 c03 的模型运行前置证据。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
 - 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。

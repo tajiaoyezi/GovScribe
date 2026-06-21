@@ -1,0 +1,10 @@
+doctype,candidate_batch,source_group_ref,raw_package_count,readable_package_count,readable_gap_to_100,intake_stage,next_c03_gate,desensitization_owner,c03_ingestion_owner,notes
+通知,local-corpus-20260620,local-corpus-20260620-notice,45,43,57,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,已有可抽取候选包；下一步先做清洗脱敏再进入 c03
+请示,local-corpus-20260620,local-corpus-20260620-request,10,10,90,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,可作为小样本候选；仍需补足样本量
+报告,local-corpus-20260620,local-corpus-20260620-report,10,10,90,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,可作为小样本候选；仍需补足样本量
+函,local-corpus-20260620,local-corpus-20260620-letter,10,10,90,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,可作为小样本候选；仍需补足样本量
+会议纪要,local-corpus-20260620,local-corpus-20260620-minutes,12,12,88,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,可作为小样本候选；仍需补足样本量
+通报,local-corpus-20260620,local-corpus-20260620-circular,1,1,99,needs_more_corpus,insufficient,待实施侧确认,待实施侧确认,候选数量过低；先补充素材再进入稳定校准
+批复,local-corpus-20260620,local-corpus-20260620-reply,10,10,90,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,可作为小样本候选；仍需补足样本量
+讲话稿,local-corpus-20260620,local-corpus-20260620-speech,0,0,100,missing_corpus,pending_corpus,待实施侧确认,待实施侧确认,当前批次未覆盖；需补充真实或相似公文
+方案,local-corpus-20260620,local-corpus-20260620-plan,0,0,100,missing_corpus,pending_corpus,待实施侧确认,待实施侧确认,当前批次未覆盖原文；需确认原文位置或入库批次

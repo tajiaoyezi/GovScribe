@@ -436,6 +436,62 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 	}
 }
 
+func TestC05CalibrationVariantsPlanComparableCoverageForEveryDoctype(t *testing.T) {
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-variants.csv")
+	index := csvIndex(header)
+	wantSubtypes := map[string]string{
+		"通知": "开展活动通知", "请示": "重大事项请求审定请示", "报告": "专项工作报告",
+		"函": "工作商洽函", "会议纪要": "专项工作会议纪要", "通报": "工作事务类情况通报",
+		"批复": "表态式批复", "讲话稿": "工作部署讲话", "方案": "工作方案",
+	}
+	type variantCoverage struct {
+		count            int
+		hasBaseline      bool
+		hasComparison    bool
+		comparisonGroups map[string]int
+	}
+	coverage := map[string]variantCoverage{}
+	for doctype := range c05HighFreqDoctypeSeen() {
+		coverage[doctype] = variantCoverage{comparisonGroups: map[string]int{}}
+	}
+
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		requireKnownC05Doctype(t, doctype, "calibration variants", rowNumber)
+		if gotSubtype := requiredCell(t, row, index, "subtype", rowNumber); gotSubtype != wantSubtypes[doctype] {
+			t.Fatalf("calibration variants row %d subtype for %s = %q, want representative subtype %q", rowNumber, doctype, gotSubtype, wantSubtypes[doctype])
+		}
+		status := requiredCell(t, row, index, "variant_status", rowNumber)
+		if status != "planned" {
+			t.Fatalf("calibration variants row %d status = %q, want planned until c03 ready_for_model_run evidence exists", rowNumber, status)
+		}
+		axis := requiredCell(t, row, index, "comparison_axis", rowNumber)
+		group := requiredCell(t, row, index, "comparison_group", rowNumber)
+		current := coverage[doctype]
+		current.count++
+		current.comparisonGroups[group]++
+		if axis == "baseline" {
+			current.hasBaseline = true
+		} else {
+			current.hasComparison = true
+		}
+		coverage[doctype] = current
+	}
+
+	for doctype, current := range coverage {
+		if current.count < 2 {
+			t.Fatalf("calibration variants for %s = %d, want at least baseline plus one comparison variant", doctype, current.count)
+		}
+		if !current.hasBaseline || !current.hasComparison {
+			t.Fatalf("calibration variants for %s must include baseline and non-baseline comparison axes", doctype)
+		}
+		if len(current.comparisonGroups) != 1 {
+			t.Fatalf("calibration variants for %s span %d comparison groups, want one group for comparable planned variants", doctype, len(current.comparisonGroups))
+		}
+	}
+}
+
 type c05CalibrationCandidateSummary struct {
 	candidateBatch       string
 	rawPackageCount      int

@@ -6,5 +6,5 @@ doctype,candidate_batch,raw_package_count,readable_package_count,desensitized_ba
 会议纪要,local-corpus-20260620,12,12,pending,pending,pending,pending_desensitization,awaiting_desensitization
 通报,local-corpus-20260620,1,1,pending,pending,pending,insufficient,low_sample_count
 批复,local-corpus-20260620,10,10,pending,pending,pending,pending_desensitization,awaiting_desensitization
-讲话稿,local-corpus-20260620,0,0,pending,pending,pending,insufficient,missing_corpus
-方案,local-corpus-20260620,0,0,pending,pending,pending,pending_corpus,missing_corpus
+讲话稿,local-corpus-20260620,1,1,pending,pending,pending,insufficient,low_sample_count
+方案,local-corpus-20260620,2,2,pending,pending,pending,insufficient,low_sample_count

@@ -449,7 +449,7 @@ func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
 
 	index := csvIndex(header)
 	intakeSummaries := readC05CorpusIntakeSummaries(t)
-	auditSourceGroups := readC05LocalPackageAuditSourceGroups(t)
+	auditSummaries := readC05LocalPackageAuditSummaries(t)
 	allowedStatuses := map[string]bool{
 		"ready_for_desensitization": true,
 		"needs_more_corpus":         true,
@@ -474,7 +474,8 @@ func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
 		if !ok {
 			t.Fatalf("source group map row %d source_group_ref %q is not referenced by corpus intake readiness", rowNumber, sourceGroupRef)
 		}
-		if !auditSourceGroups[sourceGroupRef] {
+		audit, ok := auditSummaries[sourceGroupRef]
+		if !ok {
 			t.Fatalf("source group map row %d source_group_ref %q is not referenced by local package audit", rowNumber, sourceGroupRef)
 		}
 
@@ -496,13 +497,22 @@ func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
 		if doctype != expected.doctype {
 			t.Fatalf("source group map row %d doctype = %q, want %q from corpus intake readiness", rowNumber, doctype, expected.doctype)
 		}
+		if doctype != audit.doctype {
+			t.Fatalf("source group map row %d doctype = %q, want %q from local package audit", rowNumber, doctype, audit.doctype)
+		}
 		if got := row[index["candidate_batch"]]; got != expected.candidateBatch {
 			t.Fatalf("source group map row %d candidate_batch = %q, want %q from corpus intake readiness", rowNumber, got, expected.candidateBatch)
+		}
+		if got := row[index["candidate_batch"]]; got != audit.candidateBatch {
+			t.Fatalf("source group map row %d candidate_batch = %q, want %q from local package audit", rowNumber, got, audit.candidateBatch)
 		}
 		rawPackageCount := requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber)
 		readablePackageCount := requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber)
 		if rawPackageCount != expected.rawPackageCount || readablePackageCount != expected.readablePackageCount {
 			t.Fatalf("source group map row %d counts raw/readable = %d/%d, want %d/%d from corpus intake readiness", rowNumber, rawPackageCount, readablePackageCount, expected.rawPackageCount, expected.readablePackageCount)
+		}
+		if rawPackageCount != audit.rawPackageCount || readablePackageCount != audit.readablePackageCount {
+			t.Fatalf("source group map row %d counts raw/readable = %d/%d, want %d/%d from local package audit", rowNumber, rawPackageCount, readablePackageCount, audit.rawPackageCount, audit.readablePackageCount)
 		}
 
 		manualSplitRequired := requireBoolCell(t, row, index, "manual_split_required", rowNumber)
@@ -513,6 +523,9 @@ func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
 		}
 		if mappingStatus != expected.intakeStage {
 			t.Fatalf("source group map row %d mapping_status = %q, want %q from corpus intake readiness", rowNumber, mappingStatus, expected.intakeStage)
+		}
+		if mappingStatus != audit.packageAuditStatus {
+			t.Fatalf("source group map row %d mapping_status = %q, want %q from local package audit", rowNumber, mappingStatus, audit.packageAuditStatus)
 		}
 		if nextGate := requiredCell(t, row, index, "next_c03_gate", rowNumber); nextGate != expected.nextC03Gate {
 			t.Fatalf("source group map row %d next_c03_gate = %q, want %q from corpus intake readiness", rowNumber, nextGate, expected.nextC03Gate)
@@ -542,6 +555,11 @@ func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
 	for sourceGroupRef := range intakeSummaries {
 		if !seen[sourceGroupRef] {
 			t.Fatalf("source group map is missing corpus intake source_group_ref %q", sourceGroupRef)
+		}
+	}
+	for sourceGroupRef := range auditSummaries {
+		if !seen[sourceGroupRef] {
+			t.Fatalf("source group map is missing local package audit source_group_ref %q", sourceGroupRef)
 		}
 	}
 }
@@ -617,6 +635,14 @@ type c05CorpusIntakeSummary struct {
 	nextC03Gate          string
 }
 
+type c05LocalPackageAuditSummary struct {
+	candidateBatch       string
+	doctype              string
+	rawPackageCount      int
+	readablePackageCount int
+	packageAuditStatus   string
+}
+
 func readC05CalibrationCandidateSummaries(t *testing.T) map[string]c05CalibrationCandidateSummary {
 	t.Helper()
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-candidates.csv")
@@ -660,20 +686,26 @@ func readC05CorpusIntakeSummaries(t *testing.T) map[string]c05CorpusIntakeSummar
 	return summaries
 }
 
-func readC05LocalPackageAuditSourceGroups(t *testing.T) map[string]bool {
+func readC05LocalPackageAuditSummaries(t *testing.T) map[string]c05LocalPackageAuditSummary {
 	t.Helper()
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-local-package-audit.csv")
 	index := csvIndex(header)
-	sourceGroups := map[string]bool{}
+	summaries := map[string]c05LocalPackageAuditSummary{}
 	for rowIndex, row := range rows {
 		rowNumber := rowIndex + 2
 		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
-		if sourceGroups[sourceGroupRef] {
+		if summaries[sourceGroupRef].candidateBatch != "" {
 			t.Fatalf("local package audit row %d duplicates source_group_ref %q", rowNumber, sourceGroupRef)
 		}
-		sourceGroups[sourceGroupRef] = true
+		summaries[sourceGroupRef] = c05LocalPackageAuditSummary{
+			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
+			doctype:              requiredCell(t, row, index, "doctype", rowNumber),
+			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
+			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+			packageAuditStatus:   requiredCell(t, row, index, "package_audit_status", rowNumber),
+		}
 	}
-	return sourceGroups
+	return summaries
 }
 
 func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {

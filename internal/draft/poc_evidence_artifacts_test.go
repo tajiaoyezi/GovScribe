@@ -253,6 +253,7 @@ func TestC05PrivateModelCalibrationVariantMatching(t *testing.T) {
 			topK:             3,
 			promptTotalChars: 6000,
 			contractVersion:  "contract:v2026-06-20-r1",
+			status:           "ready_for_run",
 		},
 	}
 
@@ -287,6 +288,39 @@ func TestC05PrivateModelCalibrationVariantMatching(t *testing.T) {
 	}
 }
 
+func TestC05PrivateModelCalibrationVariantRequiresReadyForRun(t *testing.T) {
+	run := calibrationVariant{
+		id:               "variant:notice-planned-v1",
+		doctype:          "通知",
+		subtype:          "工作通知",
+		topK:             3,
+		promptTotalChars: 6000,
+		contractVersion:  "contract:v2026-06-20-r1",
+	}
+	variants := map[string]calibrationVariant{
+		run.id: {
+			id:               run.id,
+			doctype:          run.doctype,
+			subtype:          run.subtype,
+			topK:             run.topK,
+			promptTotalChars: run.promptTotalChars,
+			contractVersion:  run.contractVersion,
+			status:           "planned",
+		},
+	}
+
+	if hasMatchingC05PrivateModelCalibrationVariant(variants, run) {
+		t.Fatalf("planned variant should be rejected for private model run evidence")
+	}
+
+	variant := variants[run.id]
+	variant.status = "ready_for_run"
+	variants[run.id] = variant
+	if !hasMatchingC05PrivateModelCalibrationVariant(variants, run) {
+		t.Fatalf("ready_for_run variant should be accepted for private model run evidence")
+	}
+}
+
 func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *testing.T) {
 	variants := map[string]calibrationVariant{
 		"variant:notice-topk3-v1": {
@@ -296,6 +330,7 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 			topK:             3,
 			promptTotalChars: 6000,
 			contractVersion:  "contract:v2026-06-20-r1",
+			status:           "ready_for_run",
 		},
 		"variant:notice-topk5-v1": {
 			id:               "variant:notice-topk5-v1",
@@ -304,6 +339,7 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 			topK:             5,
 			promptTotalChars: 6000,
 			contractVersion:  "contract:v2026-06-20-r1",
+			status:           "ready_for_run",
 		},
 	}
 	run := c05PrivateModelRun{
@@ -326,10 +362,14 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 		t.Fatalf("expected matching private model decision variant evidence to pass: %v", err)
 	}
 
+	plannedVariant := variants["variant:notice-topk3-v1"]
+	plannedVariant.status = "planned"
+
 	tests := []struct {
-		name string
-		refs calibrationEvidenceRefs
-		runs []c05PrivateModelRun
+		name     string
+		refs     calibrationEvidenceRefs
+		runs     []c05PrivateModelRun
+		variants map[string]calibrationVariant
 	}{
 		{
 			name: "missing variant refs",
@@ -347,6 +387,14 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 				variantIDs:      []string{"variant:notice-topk5-v1"},
 			},
 			runs: []c05PrivateModelRun{run},
+		},
+		{
+			name: "variant status not ready for run",
+			refs: refs,
+			runs: []c05PrivateModelRun{run},
+			variants: map[string]calibrationVariant{
+				plannedVariant.id: plannedVariant,
+			},
 		},
 		{
 			name: "variant ref not backed by a referenced run",
@@ -375,7 +423,11 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := privateModelDecisionVariantEvidenceError(tc.refs, tc.runs, variants, "通知"); err == nil {
+			variantSet := variants
+			if tc.variants != nil {
+				variantSet = tc.variants
+			}
+			if err := privateModelDecisionVariantEvidenceError(tc.refs, tc.runs, variantSet, "通知"); err == nil {
 				t.Fatalf("expected invalid private model decision variant evidence to be rejected")
 			}
 		})
@@ -668,7 +720,8 @@ func hasMatchingC05PrivateModelCalibrationVariant(variants map[string]calibratio
 	if !ok {
 		return false
 	}
-	return variant.doctype == run.doctype &&
+	return strings.TrimSpace(variant.status) == "ready_for_run" &&
+		variant.doctype == run.doctype &&
 		variant.subtype == strings.TrimSpace(run.subtype) &&
 		variant.topK == run.topK &&
 		variant.promptTotalChars == run.promptTotalChars &&
@@ -702,6 +755,9 @@ func privateModelDecisionVariantEvidenceError(refs calibrationEvidenceRefs, runs
 			return fmt.Errorf("run %s uses prompt_variant_id %s outside evidence_refs", run.id, variantID)
 		}
 		variant := variants[variantID]
+		if strings.TrimSpace(variant.status) != "ready_for_run" {
+			return fmt.Errorf("run %s prompt_variant_id %s status = %s, want ready_for_run", run.id, variantID, variant.status)
+		}
 		if variant.doctype != run.doctype ||
 			variant.subtype != strings.TrimSpace(run.subtype) ||
 			variant.topK != run.topK ||

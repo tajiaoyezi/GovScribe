@@ -22,7 +22,7 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 		"c05-high-freq-doctype-corpus-intake-readiness.csv": {
 			"doctype", "candidate_batch", "source_group_ref", "raw_package_count", "readable_package_count",
 			"readable_gap_to_100", "intake_stage", "next_c03_gate", "desensitization_owner",
-			"c03_ingestion_owner", "notes",
+			"c03_ingestion_owner", "readiness_code",
 		},
 		"c05-high-freq-doctype-calibration-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
@@ -198,6 +198,7 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 	}
 
 	index := csvIndex(header)
+	candidateSummaries := readC05CalibrationCandidateSummaries(t)
 	wantDoctypes := c05HighFreqDoctypeSeen()
 	allowedIntakeStages := map[string]bool{
 		"ready_for_desensitization": true,
@@ -206,6 +207,11 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 	}
 	allowedNextGates := map[string]bool{
 		"pending_corpus": true, "pending_desensitization": true, "insufficient": true,
+	}
+	allowedReadinessCodes := map[string]bool{
+		"has_readable_candidates": true,
+		"low_sample_count":        true,
+		"missing_corpus":          true,
 	}
 	rawArtifactExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)
 
@@ -217,12 +223,18 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 		}
 		wantDoctypes[doctype] = true
 
+		candidateSummary, ok := candidateSummaries[doctype]
+		if !ok {
+			t.Fatalf("corpus intake readiness row %d has no matching calibration candidate row for %s", rowNumber, doctype)
+		}
 		candidateBatch := requiredCell(t, row, index, "candidate_batch", rowNumber)
+		if candidateBatch != candidateSummary.candidateBatch {
+			t.Fatalf("corpus intake readiness row %d candidate_batch = %q, want %q from calibration candidates", rowNumber, candidateBatch, candidateSummary.candidateBatch)
+		}
 		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
 		for field, value := range map[string]string{
 			"candidate_batch":  candidateBatch,
 			"source_group_ref": sourceGroupRef,
-			"notes":            requiredCell(t, row, index, "notes", rowNumber),
 		} {
 			if c05RawCorpusReferencePattern.MatchString(value) {
 				t.Fatalf("corpus intake readiness row %d field %s exposes local raw corpus directory: %q", rowNumber, field, value)
@@ -234,6 +246,9 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 
 		rawPackageCount := requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber)
 		readablePackageCount := requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber)
+		if rawPackageCount != candidateSummary.rawPackageCount || readablePackageCount != candidateSummary.readablePackageCount {
+			t.Fatalf("corpus intake readiness row %d counts raw/readable = %d/%d, want %d/%d from calibration candidates", rowNumber, rawPackageCount, readablePackageCount, candidateSummary.rawPackageCount, candidateSummary.readablePackageCount)
+		}
 		if readablePackageCount > rawPackageCount {
 			t.Fatalf("corpus intake readiness row %d readable_package_count = %d, want <= raw_package_count %d", rowNumber, readablePackageCount, rawPackageCount)
 		}
@@ -256,19 +271,32 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 		}
 		requiredCell(t, row, index, "desensitization_owner", rowNumber)
 		requiredCell(t, row, index, "c03_ingestion_owner", rowNumber)
+		readinessCode := requiredCell(t, row, index, "readiness_code", rowNumber)
+		if !allowedReadinessCodes[readinessCode] {
+			t.Fatalf("corpus intake readiness row %d readiness_code = %q, want controlled readiness code", rowNumber, readinessCode)
+		}
 
 		switch intakeStage {
 		case "ready_for_desensitization":
 			if readablePackageCount <= 0 || nextGate != "pending_desensitization" {
 				t.Fatalf("corpus intake readiness row %d ready_for_desensitization requires readable candidates and next_c03_gate=pending_desensitization", rowNumber)
 			}
+			if readinessCode != "has_readable_candidates" {
+				t.Fatalf("corpus intake readiness row %d ready_for_desensitization readiness_code = %q, want has_readable_candidates", rowNumber, readinessCode)
+			}
 		case "needs_more_corpus":
 			if readablePackageCount <= 0 || readablePackageCount >= 100 || nextGate != "insufficient" {
 				t.Fatalf("corpus intake readiness row %d needs_more_corpus requires 1-99 readable candidates and next_c03_gate=insufficient", rowNumber)
 			}
+			if readinessCode != "low_sample_count" {
+				t.Fatalf("corpus intake readiness row %d needs_more_corpus readiness_code = %q, want low_sample_count", rowNumber, readinessCode)
+			}
 		case "missing_corpus":
 			if readablePackageCount != 0 || nextGate != "pending_corpus" {
 				t.Fatalf("corpus intake readiness row %d missing_corpus requires zero readable candidates and next_c03_gate=pending_corpus", rowNumber)
+			}
+			if readinessCode != "missing_corpus" {
+				t.Fatalf("corpus intake readiness row %d missing_corpus readiness_code = %q, want missing_corpus", rowNumber, readinessCode)
 			}
 		}
 	}
@@ -277,6 +305,32 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 			t.Fatalf("missing c05 corpus intake readiness row for %s", doctype)
 		}
 	}
+}
+
+type c05CalibrationCandidateSummary struct {
+	candidateBatch       string
+	rawPackageCount      int
+	readablePackageCount int
+}
+
+func readC05CalibrationCandidateSummaries(t *testing.T) map[string]c05CalibrationCandidateSummary {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-candidates.csv")
+	index := csvIndex(header)
+	summaries := map[string]c05CalibrationCandidateSummary{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		if summaries[doctype].candidateBatch != "" {
+			t.Fatalf("calibration candidates row %d duplicates doctype %q", rowNumber, doctype)
+		}
+		summaries[doctype] = c05CalibrationCandidateSummary{
+			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
+			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
+			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+		}
+	}
+	return summaries
 }
 
 func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {

@@ -26,7 +26,7 @@
 ## 记录文件
 
 - `docs/other/c05-high-freq-doctype-calibration-candidates.csv`：候选素材与 c03 入库状态。
-- `docs/other/c05-high-freq-doctype-corpus-intake-readiness.csv`：原始候选素材到清洗 / 脱敏 / c03 入库的准备清单；只记录抽象批次、聚合数量、缺口、责任状态与下一步 gate，不记录本地路径、原始文件名或正文标题。
+- `docs/other/c05-high-freq-doctype-corpus-intake-readiness.csv`：原始候选素材到清洗 / 脱敏 / c03 入库的准备清单；只记录抽象批次、聚合数量、缺口、责任状态、下一步 gate 与受控 readiness code，不记录本地路径、原始文件名、正文标题或自由文本说明。
 - `docs/other/c05-high-freq-doctype-calibration-variants.csv`：校准候选提示变体矩阵。
 - `docs/other/c05-high-freq-doctype-calibration-runs.csv`：目标模型运行记录。
 - `docs/other/c05-high-freq-doctype-calibration-reviews.csv`：人工评分与采纳标签。
@@ -50,6 +50,7 @@
 
 - `doctype` 必须覆盖 c05 9 个高频文种，且每个文种只记录聚合数量与抽象来源分组。
 - `candidate_batch` 与 `source_group_ref` 只能使用抽象批次 / 分组引用，不得记录本地原始目录、原始文件名、正文标题或 Office / PDF 原文扩展名。
+- `candidate_batch`、`raw_package_count` 与 `readable_package_count` 必须与同文种的候选素材表记录完全一致，不得在准备清单中单独抬高或改写候选数量。
 - `readable_gap_to_100` 必须按 `max(0, 100 - readable_package_count)` 计算，便于实施侧判断距离 `<100` 稀缺线的缺口。
 - `intake_stage` 取值：`ready_for_desensitization` / `needs_more_corpus` / `missing_corpus`。
 - `next_c03_gate` 取值：`pending_desensitization` / `pending_corpus` / `insufficient`，必须与候选数量和 `intake_stage` 自洽。
@@ -57,6 +58,7 @@
 - `needs_more_corpus` 表示有少量候选但不足以支撑稳定校准，仍需补充素材。
 - `missing_corpus` 表示当前批次未覆盖该文种，必须先补齐原文或确认已有脱敏入库批次。
 - `desensitization_owner` 与 `c03_ingestion_owner` 必须显式登记责任状态；未定责时填“待实施侧确认”，不得留空。
+- `readiness_code` 只允许 `has_readable_candidates` / `low_sample_count` / `missing_corpus` 三类受控代码，不得使用自由文本记录原始标题、正文片段或文件名。
 
 ### 提示变体矩阵
 

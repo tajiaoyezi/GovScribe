@@ -1,6 +1,7 @@
 package draft
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -144,6 +145,7 @@ func TestC05EvidenceRejectsRawCorpusDirectoryReferences(t *testing.T) {
 func TestC05PrivateModelPoCEvidenceRowsStayTraceableWhenPresent(t *testing.T) {
 	runs := readC05PrivateModelRuns(t)
 	reviews := readC05PrivateModelReviews(t, runs)
+	variants := readC05CalibrationVariants(t)
 
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-private-model-decisions.csv")
 	index := csvIndex(header)
@@ -183,6 +185,7 @@ func TestC05PrivateModelPoCEvidenceRowsStayTraceableWhenPresent(t *testing.T) {
 			}
 
 			referencedRuns := map[string]c05PrivateModelRun{}
+			referencedRunList := make([]c05PrivateModelRun, 0, len(evidenceRefs.runIDs))
 			for _, runID := range evidenceRefs.runIDs {
 				run, ok := runs[runID]
 				if !ok {
@@ -195,9 +198,13 @@ func TestC05PrivateModelPoCEvidenceRowsStayTraceableWhenPresent(t *testing.T) {
 					t.Fatalf("private model decisions row %d references incomplete run %q", rowNumber, runID)
 				}
 				referencedRuns[runID] = run
+				referencedRunList = append(referencedRunList, run)
 			}
 			if runCount != len(referencedRuns) {
 				t.Fatalf("private model decisions row %d run_count = %d, want %d referenced unique runs", rowNumber, runCount, len(referencedRuns))
+			}
+			if err := privateModelDecisionVariantEvidenceError(evidenceRefs, referencedRunList, variants, doctype); err != nil {
+				t.Fatalf("private model decisions row %d has invalid prompt variant evidence: %v", rowNumber, err)
 			}
 
 			referencedReviews := make([]c05PrivateModelReview, 0, len(evidenceRefs.reviewRecordIDs))
@@ -275,6 +282,101 @@ func TestC05PrivateModelCalibrationVariantMatching(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if hasMatchingC05PrivateModelCalibrationVariant(variants, tc.run) {
 				t.Fatalf("expected %s to be rejected", tc.name)
+			}
+		})
+	}
+}
+
+func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *testing.T) {
+	variants := map[string]calibrationVariant{
+		"variant:notice-topk3-v1": {
+			id:               "variant:notice-topk3-v1",
+			doctype:          "通知",
+			subtype:          "工作通知",
+			topK:             3,
+			promptTotalChars: 6000,
+			contractVersion:  "contract:v2026-06-20-r1",
+		},
+		"variant:notice-topk5-v1": {
+			id:               "variant:notice-topk5-v1",
+			doctype:          "通知",
+			subtype:          "工作通知",
+			topK:             5,
+			promptTotalChars: 6000,
+			contractVersion:  "contract:v2026-06-20-r1",
+		},
+	}
+	run := c05PrivateModelRun{
+		id:               "pm-run-notice-001",
+		doctype:          "通知",
+		modelProfile:     "国产厂商/政务模型/private-gateway",
+		streamCompleted:  true,
+		subtype:          "工作通知",
+		promptVariantID:  "variant:notice-topk3-v1",
+		topK:             3,
+		promptTotalChars: 6000,
+		contractVersion:  "contract:v2026-06-20-r1",
+	}
+	refs := calibrationEvidenceRefs{
+		runIDs:          []string{run.id},
+		reviewRecordIDs: []string{"pm-review-notice-001"},
+		variantIDs:      []string{"variant:notice-topk3-v1"},
+	}
+	if err := privateModelDecisionVariantEvidenceError(refs, []c05PrivateModelRun{run}, variants, "通知"); err != nil {
+		t.Fatalf("expected matching private model decision variant evidence to pass: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		refs calibrationEvidenceRefs
+		runs []c05PrivateModelRun
+	}{
+		{
+			name: "missing variant refs",
+			refs: calibrationEvidenceRefs{
+				runIDs:          []string{run.id},
+				reviewRecordIDs: []string{"pm-review-notice-001"},
+			},
+			runs: []c05PrivateModelRun{run},
+		},
+		{
+			name: "run variant outside evidence refs",
+			refs: calibrationEvidenceRefs{
+				runIDs:          []string{run.id},
+				reviewRecordIDs: []string{"pm-review-notice-001"},
+				variantIDs:      []string{"variant:notice-topk5-v1"},
+			},
+			runs: []c05PrivateModelRun{run},
+		},
+		{
+			name: "variant ref not backed by a referenced run",
+			refs: calibrationEvidenceRefs{
+				runIDs:          []string{run.id},
+				reviewRecordIDs: []string{"pm-review-notice-001"},
+				variantIDs:      []string{"variant:notice-topk3-v1", "variant:notice-topk5-v1"},
+			},
+			runs: []c05PrivateModelRun{run},
+		},
+		{
+			name: "variant settings mismatch run settings",
+			refs: refs,
+			runs: []c05PrivateModelRun{{
+				id:               "pm-run-notice-001",
+				doctype:          "通知",
+				modelProfile:     "国产厂商/政务模型/private-gateway",
+				streamCompleted:  true,
+				subtype:          "工作通知",
+				promptVariantID:  "variant:notice-topk3-v1",
+				topK:             5,
+				promptTotalChars: 6000,
+				contractVersion:  "contract:v2026-06-20-r1",
+			}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := privateModelDecisionVariantEvidenceError(tc.refs, tc.runs, variants, "通知"); err == nil {
+				t.Fatalf("expected invalid private model decision variant evidence to be rejected")
 			}
 		})
 	}
@@ -387,10 +489,15 @@ func TestC05PoCEvidenceCSVsDoNotExposeRawArtifactsOrSecrets(t *testing.T) {
 }
 
 type c05PrivateModelRun struct {
-	id              string
-	doctype         string
-	modelProfile    string
-	streamCompleted bool
+	id               string
+	doctype          string
+	modelProfile     string
+	streamCompleted  bool
+	subtype          string
+	promptVariantID  string
+	topK             int
+	promptTotalChars int
+	contractVersion  string
 }
 
 type c05PrivateModelReview struct {
@@ -482,10 +589,15 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 		}
 
 		runs[runID] = c05PrivateModelRun{
-			id:              runID,
-			doctype:         doctype,
-			modelProfile:    row[index["model_provider"]] + "/" + row[index["model_name"]] + "/" + row[index["model_backend"]],
-			streamCompleted: streamCompleted,
+			id:               runID,
+			doctype:          doctype,
+			modelProfile:     row[index["model_provider"]] + "/" + row[index["model_name"]] + "/" + row[index["model_backend"]],
+			streamCompleted:  streamCompleted,
+			subtype:          strings.TrimSpace(row[index["subtype"]]),
+			promptVariantID:  strings.TrimSpace(row[index["prompt_variant_id"]]),
+			topK:             topK,
+			promptTotalChars: promptTotalChars,
+			contractVersion:  strings.TrimSpace(row[index["contract_version"]]),
 		}
 	}
 	return runs
@@ -561,6 +673,51 @@ func hasMatchingC05PrivateModelCalibrationVariant(variants map[string]calibratio
 		variant.topK == run.topK &&
 		variant.promptTotalChars == run.promptTotalChars &&
 		variant.contractVersion == strings.TrimSpace(run.contractVersion)
+}
+
+func privateModelDecisionVariantEvidenceError(refs calibrationEvidenceRefs, runs []c05PrivateModelRun, variants map[string]calibrationVariant, doctype string) error {
+	if len(refs.variantIDs) == 0 {
+		return fmt.Errorf("evidence_refs must include variant:<id> refs")
+	}
+
+	referencedVariantIDs := map[string]bool{}
+	for _, variantID := range refs.variantIDs {
+		variant, ok := variants[variantID]
+		if !ok {
+			return fmt.Errorf("references unknown variant %s", variantID)
+		}
+		if variant.doctype != doctype {
+			return fmt.Errorf("variant %s belongs to doctype %s, want %s", variantID, variant.doctype, doctype)
+		}
+		referencedVariantIDs[variantID] = true
+	}
+
+	runVariantIDs := map[string]bool{}
+	for _, run := range runs {
+		variantID := strings.TrimSpace(run.promptVariantID)
+		if variantID == "" {
+			return fmt.Errorf("run %s has no prompt_variant_id", run.id)
+		}
+		if !referencedVariantIDs[variantID] {
+			return fmt.Errorf("run %s uses prompt_variant_id %s outside evidence_refs", run.id, variantID)
+		}
+		variant := variants[variantID]
+		if variant.doctype != run.doctype ||
+			variant.subtype != strings.TrimSpace(run.subtype) ||
+			variant.topK != run.topK ||
+			variant.promptTotalChars != run.promptTotalChars ||
+			variant.contractVersion != strings.TrimSpace(run.contractVersion) {
+			return fmt.Errorf("run %s prompt_variant_id %s does not match registered variant settings", run.id, variantID)
+		}
+		runVariantIDs[variantID] = true
+	}
+
+	for _, variantID := range refs.variantIDs {
+		if !runVariantIDs[variantID] {
+			return fmt.Errorf("variant %s is not covered by referenced private model runs", variantID)
+		}
+	}
+	return nil
 }
 
 func readC05XinchuangRuntimeRuns(t *testing.T) map[string]c05XinchuangRuntimeRun {

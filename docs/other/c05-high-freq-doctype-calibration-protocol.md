@@ -82,6 +82,8 @@
 - `comparison_group` 用于把同一文种 / 子类下可比较的 TopK、提示总长或契约措辞候选归组。
 - `comparison_axis` 取值：`baseline` / `topk` / `prompt_total_chars` / `contract_wording` / `combined`。
 - `variant_status` 取值：`planned` / `ready_for_run` / `retired`；标为 `ready_for_run` 前，该文种必须已有 `ready_for_model_run` 的 c03 候选素材记录。
+- 在尚无 `ready_for_model_run` c03 候选前，9 个高频文种必须至少登记一组 `planned` baseline 与一个非 baseline 对比变体，用于提前锁定 7.3 首轮实测的 TopK / 提示总长 / 契约措辞候选；这些 `planned` 记录只代表实验设计，不代表已经可跑模型。
+- 同一文种的 planned baseline 与对比变体必须使用同一 `comparison_group`，避免后续把不可比较的模型运行误聚合为一个校准决策。
 
 ### 模型运行
 
@@ -119,6 +121,7 @@
 - 本地候选包审计必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其直接可抽取 / 需转换 / 阻塞数量必须能反算候选素材表中的 raw/readable 数量，避免“同一公文包多文件容器”或“有原文但抽取阻塞”造成数量口径漂移。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
 - 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
+- 在 7.3 尚未完成前，提示变体表必须为每个 c05 高频文种登记至少一个 `planned` baseline 与一个非 baseline 对比轴，并保持同一文种内 `comparison_group` 可比较；没有 c03 `ready_for_model_run` 证据时不得把 planned 变体升级为 `ready_for_run`。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。
 - 模型运行记录的 `c03_query_id` 必须能回查到同文种 `ready_for_model_run` 候选行，避免绕过脱敏批次与 c03 可检索数量门禁直接登记目标模型运行；`prompt_variant_id` 必须能回查到同文种 / 子类且参数一致的提示变体，避免运行记录临时写入未经登记的 TopK、提示总长或契约措辞版本。
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。

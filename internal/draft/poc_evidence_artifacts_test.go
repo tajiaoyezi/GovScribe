@@ -362,10 +362,14 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 		t.Fatalf("expected matching private model decision variant evidence to pass: %v", err)
 	}
 
+	plannedVariant := variants["variant:notice-topk3-v1"]
+	plannedVariant.status = "planned"
+
 	tests := []struct {
-		name string
-		refs calibrationEvidenceRefs
-		runs []c05PrivateModelRun
+		name     string
+		refs     calibrationEvidenceRefs
+		runs     []c05PrivateModelRun
+		variants map[string]calibrationVariant
 	}{
 		{
 			name: "missing variant refs",
@@ -383,6 +387,14 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 				variantIDs:      []string{"variant:notice-topk5-v1"},
 			},
 			runs: []c05PrivateModelRun{run},
+		},
+		{
+			name: "variant status not ready for run",
+			refs: refs,
+			runs: []c05PrivateModelRun{run},
+			variants: map[string]calibrationVariant{
+				plannedVariant.id: plannedVariant,
+			},
 		},
 		{
 			name: "variant ref not backed by a referenced run",
@@ -411,7 +423,11 @@ func TestC05PrivateModelDecisionVariantEvidenceRequiresReferencedRunVariants(t *
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := privateModelDecisionVariantEvidenceError(tc.refs, tc.runs, variants, "通知"); err == nil {
+			variantSet := variants
+			if tc.variants != nil {
+				variantSet = tc.variants
+			}
+			if err := privateModelDecisionVariantEvidenceError(tc.refs, tc.runs, variantSet, "通知"); err == nil {
 				t.Fatalf("expected invalid private model decision variant evidence to be rejected")
 			}
 		})

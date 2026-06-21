@@ -248,6 +248,40 @@ func TestC05GrayReleaseBatchesUseRegisteredLocalCandidateCounts(t *testing.T) {
 	}
 }
 
+func TestC05InventoryAndTaskNotesUseRegisteredLocalCandidateCounts(t *testing.T) {
+	candidateSummaries := readC05CalibrationCandidateSummaries(t)
+	inventory := readC05TextArtifact(t, filepath.Join("docs", "other", "c05-high-freq-doctype-sample-inventory.md"))
+	tasks := readC05TextArtifact(t, filepath.Join("openspec", "changes", "c05-high-freq-doctypes", "tasks.md"))
+
+	staleClaims := []string{
+		"其余 8 个高频文种在仓库材料中未登记明确样本数量",
+		"其余 8 文种数量未登记",
+		"其余 8 文种因数量未登记暂缓",
+	}
+	for _, claim := range staleClaims {
+		if strings.Contains(inventory, claim) {
+			t.Fatalf("sample inventory still contains stale local-corpus claim %q", claim)
+		}
+		if strings.Contains(tasks, claim) {
+			t.Fatalf("tasks.md still contains stale local-corpus claim %q", claim)
+		}
+	}
+
+	for doctype, candidate := range candidateSummaries {
+		if candidate.rawPackageCount == 0 {
+			continue
+		}
+		want := fmt.Sprintf("| %s | PDF 未登记；本地候选 %d/%d", doctype, candidate.rawPackageCount, candidate.readablePackageCount)
+		if !strings.Contains(inventory, want) {
+			t.Fatalf("sample inventory missing registered local candidate counts for %s; want snippet %q", doctype, want)
+		}
+	}
+
+	if !strings.Contains(tasks, "本地候选已登记：通知 45/43") {
+		t.Fatalf("tasks.md implementation notes must mention registered local candidate counts")
+	}
+}
+
 func c05CandidateGateCodeFor(status string, rawPackageCount, readablePackageCount int) string {
 	if rawPackageCount == 0 || readablePackageCount == 0 {
 		return "missing_corpus"
@@ -1707,6 +1741,16 @@ func c05TaskChecked(t *testing.T, taskID string) bool {
 		t.Fatalf("task %s not found in %s", taskID, path)
 	}
 	return match[1] == "x"
+}
+
+func readC05TextArtifact(t *testing.T, relativePath string) string {
+	t.Helper()
+	path := filepath.Join("..", "..", relativePath)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
 }
 
 func readCalibrationCSV(t *testing.T, name string) ([]string, [][]string) {

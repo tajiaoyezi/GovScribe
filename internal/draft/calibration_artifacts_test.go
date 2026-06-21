@@ -216,6 +216,38 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 	}
 }
 
+func TestC05GrayReleaseBatchesUseRegisteredLocalCandidateCounts(t *testing.T) {
+	candidateSummaries := readC05CalibrationCandidateSummaries(t)
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-gray-release-batches.csv")
+	index := csvIndex(header)
+
+	checked := map[string]bool{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		candidate, ok := candidateSummaries[doctype]
+		if !ok || candidate.rawPackageCount == 0 {
+			continue
+		}
+		sampleEvidence := requiredCell(t, row, index, "sample_evidence", rowNumber)
+		wantEvidence := fmt.Sprintf("本地候选 %d/%d", candidate.rawPackageCount, candidate.readablePackageCount)
+		if !strings.Contains(sampleEvidence, wantEvidence) {
+			t.Fatalf("gray release row %d sample_evidence = %q, want registered local candidate counts containing %q", rowNumber, sampleEvidence, wantEvidence)
+		}
+		gateStatus := requiredCell(t, row, index, "gate_status", rowNumber)
+		if !strings.Contains(gateStatus, "待清洗/脱敏/c03") {
+			t.Fatalf("gray release row %d gate_status = %q, want explicit cleaning/desensitization/c03 gate", rowNumber, gateStatus)
+		}
+		checked[doctype] = true
+	}
+
+	for doctype, candidate := range candidateSummaries {
+		if candidate.rawPackageCount > 0 && !checked[doctype] {
+			t.Fatalf("gray release batches missing local candidate evidence for %s", doctype)
+		}
+	}
+}
+
 func c05CandidateGateCodeFor(status string, rawPackageCount, readablePackageCount int) string {
 	if rawPackageCount == 0 || readablePackageCount == 0 {
 		return "missing_corpus"

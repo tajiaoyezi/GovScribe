@@ -258,6 +258,22 @@ func TestC05CalibrationVariantRowsStayAuditableWhenPresent(t *testing.T) {
 	readC05CalibrationVariants(t)
 }
 
+func TestC05CalibrationVariantVersionsRejectOpaqueLabels(t *testing.T) {
+	rejected := []string{"默认值", "默认", "default", "latest", "current", "TBD", "待定", "unknown", "pending"}
+	for _, value := range rejected {
+		if !looksOpaqueC05CalibrationVersion(value) {
+			t.Fatalf("version label %q should be treated as opaque", value)
+		}
+	}
+
+	allowed := []string{"contract:v2026-06-20-r1", "wording:v1.1-notice-rubric-a", "template-object:notice/v3"}
+	for _, value := range allowed {
+		if looksOpaqueC05CalibrationVersion(value) {
+			t.Fatalf("version label %q should be allowed as traceable", value)
+		}
+	}
+}
+
 func TestC05CalibrationReviewRowsReferenceRunsAndScoreRubric(t *testing.T) {
 	runHeader, runRows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-runs.csv")
 	runIndex := csvIndex(runHeader)
@@ -602,8 +618,8 @@ func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
 		topK := requirePositiveIntCell(t, row, index, "topk", rowNumber)
 		promptTotalChars := requirePositiveIntCell(t, row, index, "prompt_total_chars", rowNumber)
 		promptTokenEstimate := requirePositiveIntCell(t, row, index, "prompt_token_estimate", rowNumber)
-		contractVersion := requiredCell(t, row, index, "contract_version", rowNumber)
-		requiredCell(t, row, index, "wording_version", rowNumber)
+		contractVersion := requiredTraceableC05CalibrationVersion(t, row, index, "contract_version", rowNumber)
+		requiredTraceableC05CalibrationVersion(t, row, index, "wording_version", rowNumber)
 		requiredCell(t, row, index, "comparison_group", rowNumber)
 		axis := requiredCell(t, row, index, "comparison_axis", rowNumber)
 		if !allowedAxis[axis] {
@@ -643,6 +659,25 @@ func requireMatchingC05CalibrationVariant(t *testing.T, variants map[string]cali
 			"%s row %d prompt_variant_id = %q does not match registered variant settings",
 			source, rowNumber, run.id,
 		)
+	}
+}
+
+func requiredTraceableC05CalibrationVersion(t *testing.T, row []string, index map[string]int, field string, rowNumber int) string {
+	t.Helper()
+	value := requiredCell(t, row, index, field, rowNumber)
+	if looksOpaqueC05CalibrationVersion(value) {
+		t.Fatalf("calibration variants row %d %s = %q, want traceable version reference", rowNumber, field, value)
+	}
+	return value
+}
+
+func looksOpaqueC05CalibrationVersion(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "默认", "默认值", "default", "latest", "current", "tbd", "todo", "pending", "unknown", "n/a", "na", "待定":
+		return true
+	default:
+		return false
 	}
 }
 

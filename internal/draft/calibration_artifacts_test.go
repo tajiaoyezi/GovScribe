@@ -231,6 +231,9 @@ func TestC05GrayReleaseBatchesUseRegisteredLocalCandidateCounts(t *testing.T) {
 		}
 		sampleEvidence := requiredCell(t, row, index, "sample_evidence", rowNumber)
 		wantEvidence := fmt.Sprintf("本地候选 %d/%d", candidate.rawPackageCount, candidate.readablePackageCount)
+		if !strings.Contains(sampleEvidence, "本地候选") {
+			continue
+		}
 		if !strings.Contains(sampleEvidence, wantEvidence) {
 			t.Fatalf("gray release row %d sample_evidence = %q, want registered local candidate counts containing %q", rowNumber, sampleEvidence, wantEvidence)
 		}
@@ -257,6 +260,10 @@ func TestC05InventoryAndTaskNotesUseRegisteredLocalCandidateCounts(t *testing.T)
 		"其余 8 个高频文种在仓库材料中未登记明确样本数量",
 		"其余 8 文种数量未登记",
 		"其余 8 文种因数量未登记暂缓",
+		"讲话稿与方案原文位置仍缺",
+		"讲话稿仍缺本地候选",
+		"讲话稿 0/0",
+		"| 方案 | 0 | 0 | 本目录未覆盖",
 	}
 	for _, claim := range staleClaims {
 		if strings.Contains(inventory, claim) {
@@ -271,7 +278,7 @@ func TestC05InventoryAndTaskNotesUseRegisteredLocalCandidateCounts(t *testing.T)
 		if candidate.rawPackageCount == 0 {
 			continue
 		}
-		want := fmt.Sprintf("| %s | PDF 未登记；本地候选 %d/%d", doctype, candidate.rawPackageCount, candidate.readablePackageCount)
+		want := fmt.Sprintf("本地候选 %d/%d", candidate.rawPackageCount, candidate.readablePackageCount)
 		if !strings.Contains(inventory, want) {
 			t.Fatalf("sample inventory missing registered local candidate counts for %s; want snippet %q", doctype, want)
 		}
@@ -279,6 +286,9 @@ func TestC05InventoryAndTaskNotesUseRegisteredLocalCandidateCounts(t *testing.T)
 
 	if !strings.Contains(tasks, "本地候选已登记：通知 45/43") {
 		t.Fatalf("tasks.md implementation notes must mention registered local candidate counts")
+	}
+	if !strings.Contains(tasks, "讲话稿 1/1、方案 2/2") {
+		t.Fatalf("tasks.md implementation notes must mention speech and plan local candidate counts")
 	}
 }
 

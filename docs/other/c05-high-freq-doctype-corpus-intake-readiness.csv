@@ -6,5 +6,5 @@ doctype,candidate_batch,source_group_ref,raw_package_count,readable_package_coun
 会议纪要,local-corpus-20260620,local-corpus-20260620-minutes,12,12,88,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,has_readable_candidates
 通报,local-corpus-20260620,local-corpus-20260620-circular,1,1,99,needs_more_corpus,insufficient,待实施侧确认,待实施侧确认,low_sample_count
 批复,local-corpus-20260620,local-corpus-20260620-reply,10,10,90,ready_for_desensitization,pending_desensitization,待实施侧确认,待实施侧确认,has_readable_candidates
-讲话稿,local-corpus-20260620,local-corpus-20260620-speech,0,0,100,missing_corpus,pending_corpus,待实施侧确认,待实施侧确认,missing_corpus
-方案,local-corpus-20260620,local-corpus-20260620-plan,0,0,100,missing_corpus,pending_corpus,待实施侧确认,待实施侧确认,missing_corpus
+讲话稿,local-corpus-20260620,local-corpus-20260620-speech,1,1,99,needs_more_corpus,insufficient,待实施侧确认,待实施侧确认,low_sample_count
+方案,local-corpus-20260620,local-corpus-20260620-plan,2,2,98,needs_more_corpus,insufficient,待实施侧确认,待实施侧确认,low_sample_count

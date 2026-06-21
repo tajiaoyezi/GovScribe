@@ -374,6 +374,7 @@ type c05XinchuangRuntimeRun struct {
 
 func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 	t.Helper()
+	readyC03Queries := readReadyC05CalibrationCandidateQueries(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-private-model-runs.csv")
 	index := csvIndex(header)
 	runs := map[string]c05PrivateModelRun{}
@@ -400,10 +401,12 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 		if securityLevel := row[index["content_security_level"]]; !allowedSecurityLevels[securityLevel] {
 			t.Fatalf("private model runs row %d content_security_level = %q, want 非密/敏感/涉密", rowNumber, securityLevel)
 		}
-		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
+		c03QueryID := requiredCell(t, row, index, "c03_query_id", rowNumber)
+		if strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
 			t.Fatalf("private model runs row %d c03_query_id = %q, want c03 retrieval evidence", rowNumber, c03QueryID)
 		} else {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "private model runs", "c03_query_id", rowNumber)
+			requireReadyC05CalibrationCandidateQuery(t, readyC03Queries, doctype, c03QueryID, "private model runs", rowNumber)
 		}
 		for _, field := range []string{"topk", "prompt_total_chars"} {
 			requirePositiveIntCell(t, row, index, field, rowNumber)

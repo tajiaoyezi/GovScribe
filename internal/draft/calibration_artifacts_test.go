@@ -17,7 +17,7 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 	tests := map[string][]string{
 		"c05-high-freq-doctype-calibration-candidates.csv": {
 			"doctype", "candidate_batch", "raw_package_count", "readable_package_count",
-			"desensitized_batch_ref", "c03_query_ref", "c03_retrievable_count", "gate_status", "notes",
+			"desensitized_batch_ref", "c03_query_ref", "c03_retrievable_count", "gate_status", "candidate_gate_code",
 		},
 		"c05-high-freq-doctype-corpus-intake-readiness.csv": {
 			"doctype", "candidate_batch", "source_group_ref", "raw_package_count", "readable_package_count",
@@ -103,6 +103,13 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		"pending_corpus": true, "pending_desensitization": true, "pending_c03": true,
 		"ready_for_model_run": true, "insufficient": true,
 	}
+	allowedCandidateGateCodes := map[string]bool{
+		"missing_corpus":           true,
+		"awaiting_desensitization": true,
+		"awaiting_c03_retrieval":   true,
+		"ready_for_model_run":      true,
+		"low_sample_count":         true,
+	}
 
 	for rowIndex, row := range rows {
 		rowNumber := rowIndex + 2
@@ -114,7 +121,10 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		candidateBatch := requiredCell(t, row, index, "candidate_batch", rowNumber)
 		desensitizedBatchRef := requiredCell(t, row, index, "desensitized_batch_ref", rowNumber)
 		c03QueryRef := requiredCell(t, row, index, "c03_query_ref", rowNumber)
-		requiredCell(t, row, index, "notes", rowNumber)
+		candidateGateCode := requiredCell(t, row, index, "candidate_gate_code", rowNumber)
+		if !allowedCandidateGateCodes[candidateGateCode] {
+			t.Fatalf("candidate_gate_code for %s = %q, want controlled gate code", doctype, candidateGateCode)
+		}
 		if c05RawCorpusReferencePattern.MatchString(candidateBatch) {
 			t.Fatalf("candidate_batch for %s exposes local raw corpus directory: %q", doctype, candidateBatch)
 		}
@@ -135,6 +145,10 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		status := row[index["gate_status"]]
 		if !allowedGateStatus[status] {
 			t.Fatalf("gate_status for %s = %q, want one of known statuses", doctype, status)
+		}
+		wantGateCode := c05CandidateGateCodeFor(status, rawPackageCount, readablePackageCount)
+		if candidateGateCode != wantGateCode {
+			t.Fatalf("candidate_gate_code for %s = %q, want %q for gate_status=%s raw/readable=%d/%d", doctype, candidateGateCode, wantGateCode, status, rawPackageCount, readablePackageCount)
 		}
 		if got := row[index["c03_retrievable_count"]]; got != "pending" {
 			if _, err := strconv.Atoi(got); err != nil {
@@ -188,6 +202,25 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 		if !seen {
 			t.Fatalf("missing c05 calibration candidate row for %s", doctype)
 		}
+	}
+}
+
+func c05CandidateGateCodeFor(status string, rawPackageCount, readablePackageCount int) string {
+	if rawPackageCount == 0 || readablePackageCount == 0 {
+		return "missing_corpus"
+	}
+	if status == "insufficient" {
+		return "low_sample_count"
+	}
+	switch status {
+	case "pending_desensitization":
+		return "awaiting_desensitization"
+	case "pending_c03":
+		return "awaiting_c03_retrieval"
+	case "ready_for_model_run":
+		return "ready_for_model_run"
+	default:
+		return "missing_corpus"
 	}
 }
 

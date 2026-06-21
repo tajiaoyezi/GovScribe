@@ -2,6 +2,7 @@ package draft
 
 import (
 	"encoding/csv"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -330,6 +331,7 @@ func TestC05CalibrationReviewRowsReferenceRunsAndScoreRubric(t *testing.T) {
 func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 	runs := readCalibrationRunEvidence(t)
 	reviews := readCalibrationReviewEvidence(t)
+	variants := readC05CalibrationVariants(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-decisions.csv")
 	index := csvIndex(header)
 	seenDecisionIDs := map[string]bool{}
@@ -370,6 +372,8 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 
 			referencedRuns := make([]calibrationRunEvidence, 0, len(evidenceRefs.runIDs))
 			referencedRunIDs := map[string]bool{}
+			selectedRuns := make([]calibrationRunEvidence, 0, len(evidenceRefs.runIDs))
+			selectedRunIDs := map[string]bool{}
 			for _, runID := range evidenceRefs.runIDs {
 				run, ok := runs[runID]
 				if !ok {
@@ -388,26 +392,27 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 				if !run.streamCompleted {
 					t.Fatalf("calibration decisions row %d references incomplete run %q for pass/fail decision", rowNumber, runID)
 				}
-				if run.topK != selectedTopK || run.promptTotalChars != selectedPromptTotalChars || run.contractVersion != selectedContractVersion {
-					t.Fatalf(
-						"calibration decisions row %d references run %q with topk/chars/version = %d/%d/%q, want selected %d/%d/%q",
-						rowNumber, runID, run.topK, run.promptTotalChars, run.contractVersion,
-						selectedTopK, selectedPromptTotalChars, selectedContractVersion,
-					)
+				if run.topK == selectedTopK && run.promptTotalChars == selectedPromptTotalChars && run.contractVersion == selectedContractVersion {
+					selectedRuns = append(selectedRuns, run)
+					selectedRunIDs[runID] = true
 				}
 				referencedRuns = append(referencedRuns, run)
 			}
-			if runCount != len(referencedRuns) {
-				t.Fatalf("calibration decisions row %d run_count = %d, want %d referenced unique runs", rowNumber, runCount, len(referencedRuns))
+			if len(selectedRuns) == 0 {
+				t.Fatalf("calibration decisions row %d has no referenced completed run matching selected topk/chars/version", rowNumber)
 			}
-			if gotMedian := medianInt(referencedRuns, func(run calibrationRunEvidence) int { return run.firstTokenMS }); medianFirstTokenMS != gotMedian {
+			if runCount != len(selectedRuns) {
+				t.Fatalf("calibration decisions row %d run_count = %d, want %d selected referenced unique runs", rowNumber, runCount, len(selectedRuns))
+			}
+			if gotMedian := medianInt(selectedRuns, func(run calibrationRunEvidence) int { return run.firstTokenMS }); medianFirstTokenMS != gotMedian {
 				t.Fatalf("calibration decisions row %d median_first_token_ms = %d, want %d from referenced runs", rowNumber, medianFirstTokenMS, gotMedian)
 			}
-			if gotP95 := p95Int(referencedRuns, func(run calibrationRunEvidence) int { return run.totalGenerationMS }); p95TotalGenerationMS != gotP95 {
+			if gotP95 := p95Int(selectedRuns, func(run calibrationRunEvidence) int { return run.totalGenerationMS }); p95TotalGenerationMS != gotP95 {
 				t.Fatalf("calibration decisions row %d p95_total_generation_ms = %d, want %d from referenced runs", rowNumber, p95TotalGenerationMS, gotP95)
 			}
 
 			referencedReviews := make([]calibrationReviewEvidence, 0, len(evidenceRefs.reviewRecordIDs))
+			selectedReviews := make([]calibrationReviewEvidence, 0, len(evidenceRefs.reviewRecordIDs))
 			reviewedRunIDs := map[string]bool{}
 			for _, reviewRecordID := range evidenceRefs.reviewRecordIDs {
 				review, ok := reviews[reviewRecordID]
@@ -419,14 +424,32 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 				}
 				reviewedRunIDs[review.runID] = true
 				referencedReviews = append(referencedReviews, review)
+				if selectedRunIDs[review.runID] {
+					selectedReviews = append(selectedReviews, review)
+				}
 			}
 			for runID := range referencedRunIDs {
 				if !reviewedRunIDs[runID] {
 					t.Fatalf("calibration decisions row %d references run %q without a corresponding review evidence ref", rowNumber, runID)
 				}
 			}
-			if gotAdoptionRate := adoptionRateFromReviews(referencedReviews); math.Abs(adoptionRate-gotAdoptionRate) > 0.005 {
+			if len(selectedReviews) == 0 {
+				t.Fatalf("calibration decisions row %d has no review for selected run evidence", rowNumber)
+			}
+			if gotAdoptionRate := adoptionRateFromReviews(selectedReviews); math.Abs(adoptionRate-gotAdoptionRate) > 0.005 {
 				t.Fatalf("calibration decisions row %d adoption_rate = %.4f, want %.4f from referenced reviews", rowNumber, adoptionRate, gotAdoptionRate)
+			}
+			if err := calibrationDecisionVariantEvidenceError(
+				evidenceRefs,
+				referencedRuns,
+				variants,
+				doctype,
+				strings.TrimSpace(row[index["subtype"]]),
+				selectedTopK,
+				selectedPromptTotalChars,
+				selectedContractVersion,
+			); err != nil {
+				t.Fatalf("calibration decisions row %d has invalid prompt variant comparison evidence: %v", rowNumber, err)
 			}
 		}
 		if passFail == "pass" {
@@ -440,6 +463,82 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 				t.Fatalf("task 7.3 is checked but calibration decisions have no passing evidence for %s", doctype)
 			}
 		}
+	}
+}
+
+func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *testing.T) {
+	variants := map[string]calibrationVariant{
+		"variant:notice-topk3": {
+			id:                  "variant:notice-topk3",
+			doctype:             "通知",
+			subtype:             "工作通知",
+			topK:                3,
+			promptTotalChars:    6000,
+			promptTokenEstimate: 1800,
+			contractVersion:     "contract:v2026-06-20-r1",
+			comparisonGroup:     "notice-topk-calibration",
+			comparisonAxis:      "topk",
+		},
+		"variant:notice-topk5": {
+			id:                  "variant:notice-topk5",
+			doctype:             "通知",
+			subtype:             "工作通知",
+			topK:                5,
+			promptTotalChars:    6000,
+			promptTokenEstimate: 2400,
+			contractVersion:     "contract:v2026-06-20-r1",
+			comparisonGroup:     "notice-topk-calibration",
+			comparisonAxis:      "topk",
+		},
+	}
+	runs := []calibrationRunEvidence{
+		{id: "run-notice-topk3", doctype: "通知", subtype: "工作通知", promptVariantID: "variant:notice-topk3", topK: 3, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1", streamCompleted: true},
+		{id: "run-notice-topk5", doctype: "通知", subtype: "工作通知", promptVariantID: "variant:notice-topk5", topK: 5, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1", streamCompleted: true},
+	}
+	refs := calibrationEvidenceRefs{
+		runIDs:          []string{"run-notice-topk3", "run-notice-topk5"},
+		reviewRecordIDs: []string{"review-notice-topk3", "review-notice-topk5"},
+		variantIDs:      []string{"variant:notice-topk3", "variant:notice-topk5"},
+	}
+
+	if err := calibrationDecisionVariantEvidenceError(refs, runs, variants, "通知", "工作通知", 3, 6000, "contract:v2026-06-20-r1"); err != nil {
+		t.Fatalf("expected comparable variant evidence to pass: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		refs calibrationEvidenceRefs
+		runs []calibrationRunEvidence
+	}{
+		{
+			name: "missing variant refs",
+			refs: calibrationEvidenceRefs{
+				runIDs:          []string{"run-notice-topk3", "run-notice-topk5"},
+				reviewRecordIDs: []string{"review-notice-topk3", "review-notice-topk5"},
+			},
+			runs: runs,
+		},
+		{
+			name: "single variant ref",
+			refs: calibrationEvidenceRefs{
+				runIDs:          []string{"run-notice-topk3"},
+				reviewRecordIDs: []string{"review-notice-topk3"},
+				variantIDs:      []string{"variant:notice-topk3"},
+			},
+			runs: runs[:1],
+		},
+		{
+			name: "variant not covered by run",
+			refs: refs,
+			runs: runs[:1],
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := calibrationDecisionVariantEvidenceError(tc.refs, tc.runs, variants, "通知", "工作通知", 3, 6000, "contract:v2026-06-20-r1"); err == nil {
+				t.Fatalf("expected invalid variant evidence to be rejected")
+			}
+		})
 	}
 }
 
@@ -565,6 +664,7 @@ type calibrationRunEvidence struct {
 	id                string
 	doctype           string
 	subtype           string
+	promptVariantID   string
 	topK              int
 	promptTotalChars  int
 	contractVersion   string
@@ -582,6 +682,7 @@ type calibrationReviewEvidence struct {
 type calibrationEvidenceRefs struct {
 	runIDs          []string
 	reviewRecordIDs []string
+	variantIDs      []string
 }
 
 type calibrationVariant struct {
@@ -592,6 +693,8 @@ type calibrationVariant struct {
 	promptTotalChars    int
 	promptTokenEstimate int
 	contractVersion     string
+	comparisonGroup     string
+	comparisonAxis      string
 }
 
 func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
@@ -620,7 +723,7 @@ func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
 		promptTokenEstimate := requirePositiveIntCell(t, row, index, "prompt_token_estimate", rowNumber)
 		contractVersion := requiredTraceableC05CalibrationVersion(t, row, index, "contract_version", rowNumber)
 		requiredTraceableC05CalibrationVersion(t, row, index, "wording_version", rowNumber)
-		requiredCell(t, row, index, "comparison_group", rowNumber)
+		comparisonGroup := requiredCell(t, row, index, "comparison_group", rowNumber)
 		axis := requiredCell(t, row, index, "comparison_axis", rowNumber)
 		if !allowedAxis[axis] {
 			t.Fatalf("calibration variants row %d comparison_axis = %q, want known calibration axis", rowNumber, axis)
@@ -641,6 +744,8 @@ func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
 			promptTotalChars:    promptTotalChars,
 			promptTokenEstimate: promptTokenEstimate,
 			contractVersion:     contractVersion,
+			comparisonGroup:     comparisonGroup,
+			comparisonAxis:      axis,
 		}
 	}
 	return variants
@@ -704,6 +809,7 @@ func readCalibrationRunEvidence(t *testing.T) map[string]calibrationRunEvidence 
 			id:                runID,
 			doctype:           strings.TrimSpace(row[index["doctype"]]),
 			subtype:           strings.TrimSpace(row[index["subtype"]]),
+			promptVariantID:   strings.TrimSpace(row[index["prompt_variant_id"]]),
 			topK:              topK,
 			promptTotalChars:  promptTotalChars,
 			contractVersion:   strings.TrimSpace(row[index["contract_version"]]),
@@ -744,6 +850,7 @@ func parseCalibrationEvidenceRefs(t *testing.T, value string, rowNumber int) cal
 	refs := calibrationEvidenceRefs{}
 	seenRunIDs := map[string]bool{}
 	seenReviewRecordIDs := map[string]bool{}
+	seenVariantIDs := map[string]bool{}
 	for _, token := range strings.Split(value, ";") {
 		token = strings.TrimSpace(token)
 		if token == "" {
@@ -770,11 +877,88 @@ func parseCalibrationEvidenceRefs(t *testing.T, value string, rowNumber int) cal
 			}
 			seenReviewRecordIDs[reviewRecordID] = true
 			refs.reviewRecordIDs = append(refs.reviewRecordIDs, reviewRecordID)
+		case strings.HasPrefix(token, "variant:"):
+			variantID := strings.TrimSpace(strings.TrimPrefix(token, "variant:"))
+			if variantID == "" {
+				t.Fatalf("calibration decisions row %d has empty variant evidence ref in %q", rowNumber, value)
+			}
+			if seenVariantIDs[variantID] {
+				t.Fatalf("calibration decisions row %d duplicates variant evidence ref %q", rowNumber, variantID)
+			}
+			seenVariantIDs[variantID] = true
+			refs.variantIDs = append(refs.variantIDs, variantID)
 		default:
-			t.Fatalf("calibration decisions row %d evidence_refs token %q must use run:<id> or review:<id>", rowNumber, token)
+			t.Fatalf("calibration decisions row %d evidence_refs token %q must use run:<id>, review:<id>, or variant:<id>", rowNumber, token)
 		}
 	}
 	return refs
+}
+
+func calibrationDecisionVariantEvidenceError(refs calibrationEvidenceRefs, runs []calibrationRunEvidence, variants map[string]calibrationVariant, doctype, subtype string, selectedTopK, selectedPromptTotalChars int, selectedContractVersion string) error {
+	if len(refs.variantIDs) < 2 {
+		return fmt.Errorf("evidence_refs must include at least two variant:<id> refs")
+	}
+
+	referencedVariantIDs := map[string]bool{}
+	for _, variantID := range refs.variantIDs {
+		referencedVariantIDs[variantID] = true
+	}
+	runVariantIDs := map[string]bool{}
+	for _, run := range runs {
+		if run.promptVariantID == "" {
+			return fmt.Errorf("run %s has no prompt_variant_id", run.id)
+		}
+		if !referencedVariantIDs[run.promptVariantID] {
+			return fmt.Errorf("run %s uses prompt_variant_id %s outside evidence_refs", run.id, run.promptVariantID)
+		}
+		runVariantIDs[run.promptVariantID] = true
+	}
+
+	comparisonGroup := ""
+	hasCalibrationAxis := false
+	selectedVariantFound := false
+	seenVariantIDs := map[string]bool{}
+	for _, variantID := range refs.variantIDs {
+		if seenVariantIDs[variantID] {
+			return fmt.Errorf("duplicates variant ref %s", variantID)
+		}
+		seenVariantIDs[variantID] = true
+
+		variant, ok := variants[variantID]
+		if !ok {
+			return fmt.Errorf("references unknown variant %s", variantID)
+		}
+		if variant.doctype != doctype {
+			return fmt.Errorf("variant %s belongs to doctype %s, want %s", variantID, variant.doctype, doctype)
+		}
+		if subtype != "" && variant.subtype != subtype {
+			return fmt.Errorf("variant %s belongs to subtype %s, want %s", variantID, variant.subtype, subtype)
+		}
+		if !runVariantIDs[variantID] {
+			return fmt.Errorf("variant %s is not covered by referenced completed runs", variantID)
+		}
+		if comparisonGroup == "" {
+			comparisonGroup = variant.comparisonGroup
+		} else if variant.comparisonGroup != comparisonGroup {
+			return fmt.Errorf("variant %s comparison_group = %s, want %s", variantID, variant.comparisonGroup, comparisonGroup)
+		}
+		if variant.comparisonAxis != "baseline" {
+			hasCalibrationAxis = true
+		}
+		if variant.topK == selectedTopK && variant.promptTotalChars == selectedPromptTotalChars && variant.contractVersion == selectedContractVersion {
+			selectedVariantFound = true
+		}
+	}
+	if len(seenVariantIDs) < 2 {
+		return fmt.Errorf("evidence_refs must include at least two distinct variants")
+	}
+	if !hasCalibrationAxis {
+		return fmt.Errorf("variant refs only include baseline axis, want calibration axis evidence")
+	}
+	if !selectedVariantFound {
+		return fmt.Errorf("no variant ref matches selected topk/chars/contract version")
+	}
+	return nil
 }
 
 func medianInt(runs []calibrationRunEvidence, pick func(calibrationRunEvidence) int) int {

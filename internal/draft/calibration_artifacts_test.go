@@ -542,6 +542,13 @@ func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *test
 	}
 }
 
+func TestC05CalibrationEvidenceRefsKeepVariantIDPrefix(t *testing.T) {
+	refs := parseCalibrationEvidenceRefs(t, "run:run-notice-topk3;review:review-notice-topk3;variant:notice-topk3", 2)
+	if got, want := strings.Join(refs.variantIDs, ","), "variant:notice-topk3"; got != want {
+		t.Fatalf("variant refs = %q, want %q", got, want)
+	}
+}
+
 func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	files := []string{
 		"c05-high-freq-doctype-calibration-candidates.csv",
@@ -878,10 +885,10 @@ func parseCalibrationEvidenceRefs(t *testing.T, value string, rowNumber int) cal
 			seenReviewRecordIDs[reviewRecordID] = true
 			refs.reviewRecordIDs = append(refs.reviewRecordIDs, reviewRecordID)
 		case strings.HasPrefix(token, "variant:"):
-			variantID := strings.TrimSpace(strings.TrimPrefix(token, "variant:"))
-			if variantID == "" {
+			if strings.TrimSpace(strings.TrimPrefix(token, "variant:")) == "" {
 				t.Fatalf("calibration decisions row %d has empty variant evidence ref in %q", rowNumber, value)
 			}
+			variantID := token
 			if seenVariantIDs[variantID] {
 				t.Fatalf("calibration decisions row %d duplicates variant evidence ref %q", rowNumber, variantID)
 			}

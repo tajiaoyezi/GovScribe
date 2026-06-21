@@ -77,7 +77,7 @@
 - `adoption_rate` 必须由人工评分记录计算，不能引用 7.1 种子样稿分数。
 - `median_first_token_ms` 与 `p95_total_generation_ms` 必须由目标模型运行记录计算。
 - 若某文种候选不足、未完成 c03 入库或无人工采纳标签，`pass_fail` 必须填 `blocked` 或 `insufficient_evidence`。
-- `evidence_refs` 对 `pass` / `fail` 决策必须使用分号分隔的 `run:<run_id>;review:<review_record_id>;variant:<variant_id>` 引用格式；被引用的运行记录、人工评分记录与提示变体必须真实存在，且评分记录必须引用同一组运行记录。
+- `evidence_refs` 对 `pass` / `fail` 决策必须使用分号分隔的 `run:<run_id>;review:<review_record_id>;variant:<variant_id>` 引用格式；其中 `variant:<variant_id>` 保留提示变体表中的完整 `variant_id`（例如 `variant:notice-topk3`），不得剥掉 `variant:` 前缀；被引用的运行记录、人工评分记录与提示变体必须真实存在，且评分记录必须引用同一组运行记录。
 - `pass` / `fail` 决策必须至少引用两个同一 `comparison_group` 的 `variant:<variant_id>`，且至少包含一个非 `baseline` 对比轴（`topk` / `prompt_total_chars` / `contract_wording` / `combined`），避免只拿单个默认提示变体伪装成校准。
 - 每个被引用的提示变体都必须被 `evidence_refs` 中的已完成模型运行覆盖；被选定的 `selected_topk`、`selected_prompt_total_chars`、`selected_contract_version` 必须匹配其中一个被引用变体。
 - `run_count`、`adoption_rate`、`median_first_token_ms`、`p95_total_generation_ms` 的聚合口径只统计匹配 `selected_topk` / `selected_prompt_total_chars` / `selected_contract_version` 的已选变体运行；其它被引用运行仅用于证明对比变体已实测。

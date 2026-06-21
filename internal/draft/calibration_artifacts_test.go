@@ -19,6 +19,11 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 			"doctype", "candidate_batch", "raw_package_count", "readable_package_count",
 			"desensitized_batch_ref", "c03_query_ref", "c03_retrievable_count", "gate_status", "notes",
 		},
+		"c05-high-freq-doctype-corpus-intake-readiness.csv": {
+			"doctype", "candidate_batch", "source_group_ref", "raw_package_count", "readable_package_count",
+			"readable_gap_to_100", "intake_stage", "next_c03_gate", "desensitization_owner",
+			"c03_ingestion_owner", "readiness_code",
+		},
 		"c05-high-freq-doctype-calibration-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
 			"prompt_variant_id", "topk", "prompt_total_chars", "prompt_token_estimate",
@@ -184,6 +189,148 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 			t.Fatalf("missing c05 calibration candidate row for %s", doctype)
 		}
 	}
+}
+
+func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-corpus-intake-readiness.csv")
+	if len(rows) != 9 {
+		t.Fatalf("corpus intake readiness rows = %d, want 9 high-frequency doctypes", len(rows))
+	}
+
+	index := csvIndex(header)
+	candidateSummaries := readC05CalibrationCandidateSummaries(t)
+	wantDoctypes := c05HighFreqDoctypeSeen()
+	allowedIntakeStages := map[string]bool{
+		"ready_for_desensitization": true,
+		"needs_more_corpus":         true,
+		"missing_corpus":            true,
+	}
+	allowedNextGates := map[string]bool{
+		"pending_corpus": true, "pending_desensitization": true, "insufficient": true,
+	}
+	allowedReadinessCodes := map[string]bool{
+		"has_readable_candidates": true,
+		"low_sample_count":        true,
+		"missing_corpus":          true,
+	}
+	rawArtifactExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)
+
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		if _, ok := wantDoctypes[doctype]; !ok {
+			t.Fatalf("unexpected doctype %q in corpus intake readiness", doctype)
+		}
+		wantDoctypes[doctype] = true
+
+		candidateSummary, ok := candidateSummaries[doctype]
+		if !ok {
+			t.Fatalf("corpus intake readiness row %d has no matching calibration candidate row for %s", rowNumber, doctype)
+		}
+		candidateBatch := requiredCell(t, row, index, "candidate_batch", rowNumber)
+		if candidateBatch != candidateSummary.candidateBatch {
+			t.Fatalf("corpus intake readiness row %d candidate_batch = %q, want %q from calibration candidates", rowNumber, candidateBatch, candidateSummary.candidateBatch)
+		}
+		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
+		for field, value := range map[string]string{
+			"candidate_batch":  candidateBatch,
+			"source_group_ref": sourceGroupRef,
+		} {
+			if c05RawCorpusReferencePattern.MatchString(value) {
+				t.Fatalf("corpus intake readiness row %d field %s exposes local raw corpus directory: %q", rowNumber, field, value)
+			}
+			if rawArtifactExtension.MatchString(value) {
+				t.Fatalf("corpus intake readiness row %d field %s exposes raw file extension: %q", rowNumber, field, value)
+			}
+		}
+
+		rawPackageCount := requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber)
+		readablePackageCount := requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber)
+		if rawPackageCount != candidateSummary.rawPackageCount || readablePackageCount != candidateSummary.readablePackageCount {
+			t.Fatalf("corpus intake readiness row %d counts raw/readable = %d/%d, want %d/%d from calibration candidates", rowNumber, rawPackageCount, readablePackageCount, candidateSummary.rawPackageCount, candidateSummary.readablePackageCount)
+		}
+		if readablePackageCount > rawPackageCount {
+			t.Fatalf("corpus intake readiness row %d readable_package_count = %d, want <= raw_package_count %d", rowNumber, readablePackageCount, rawPackageCount)
+		}
+		readableGap := requireNonNegativeIntCell(t, row, index, "readable_gap_to_100", rowNumber)
+		wantGap := 100 - readablePackageCount
+		if wantGap < 0 {
+			wantGap = 0
+		}
+		if readableGap != wantGap {
+			t.Fatalf("corpus intake readiness row %d readable_gap_to_100 = %d, want %d", rowNumber, readableGap, wantGap)
+		}
+
+		intakeStage := requiredCell(t, row, index, "intake_stage", rowNumber)
+		if !allowedIntakeStages[intakeStage] {
+			t.Fatalf("corpus intake readiness row %d intake_stage = %q, want known stage", rowNumber, intakeStage)
+		}
+		nextGate := requiredCell(t, row, index, "next_c03_gate", rowNumber)
+		if !allowedNextGates[nextGate] {
+			t.Fatalf("corpus intake readiness row %d next_c03_gate = %q, want known c03 gate", rowNumber, nextGate)
+		}
+		requiredCell(t, row, index, "desensitization_owner", rowNumber)
+		requiredCell(t, row, index, "c03_ingestion_owner", rowNumber)
+		readinessCode := requiredCell(t, row, index, "readiness_code", rowNumber)
+		if !allowedReadinessCodes[readinessCode] {
+			t.Fatalf("corpus intake readiness row %d readiness_code = %q, want controlled readiness code", rowNumber, readinessCode)
+		}
+
+		switch intakeStage {
+		case "ready_for_desensitization":
+			if readablePackageCount <= 0 || nextGate != "pending_desensitization" {
+				t.Fatalf("corpus intake readiness row %d ready_for_desensitization requires readable candidates and next_c03_gate=pending_desensitization", rowNumber)
+			}
+			if readinessCode != "has_readable_candidates" {
+				t.Fatalf("corpus intake readiness row %d ready_for_desensitization readiness_code = %q, want has_readable_candidates", rowNumber, readinessCode)
+			}
+		case "needs_more_corpus":
+			if readablePackageCount <= 0 || readablePackageCount >= 100 || nextGate != "insufficient" {
+				t.Fatalf("corpus intake readiness row %d needs_more_corpus requires 1-99 readable candidates and next_c03_gate=insufficient", rowNumber)
+			}
+			if readinessCode != "low_sample_count" {
+				t.Fatalf("corpus intake readiness row %d needs_more_corpus readiness_code = %q, want low_sample_count", rowNumber, readinessCode)
+			}
+		case "missing_corpus":
+			if readablePackageCount != 0 || nextGate != "pending_corpus" {
+				t.Fatalf("corpus intake readiness row %d missing_corpus requires zero readable candidates and next_c03_gate=pending_corpus", rowNumber)
+			}
+			if readinessCode != "missing_corpus" {
+				t.Fatalf("corpus intake readiness row %d missing_corpus readiness_code = %q, want missing_corpus", rowNumber, readinessCode)
+			}
+		}
+	}
+	for doctype, seen := range wantDoctypes {
+		if !seen {
+			t.Fatalf("missing c05 corpus intake readiness row for %s", doctype)
+		}
+	}
+}
+
+type c05CalibrationCandidateSummary struct {
+	candidateBatch       string
+	rawPackageCount      int
+	readablePackageCount int
+}
+
+func readC05CalibrationCandidateSummaries(t *testing.T) map[string]c05CalibrationCandidateSummary {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-candidates.csv")
+	index := csvIndex(header)
+	summaries := map[string]c05CalibrationCandidateSummary{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		if summaries[doctype].candidateBatch != "" {
+			t.Fatalf("calibration candidates row %d duplicates doctype %q", rowNumber, doctype)
+		}
+		summaries[doctype] = c05CalibrationCandidateSummary{
+			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
+			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
+			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+		}
+	}
+	return summaries
 }
 
 func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
@@ -552,6 +699,7 @@ func TestC05CalibrationEvidenceRefsKeepVariantIDPrefix(t *testing.T) {
 func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	files := []string{
 		"c05-high-freq-doctype-calibration-candidates.csv",
+		"c05-high-freq-doctype-corpus-intake-readiness.csv",
 		"c05-high-freq-doctype-calibration-variants.csv",
 		"c05-high-freq-doctype-calibration-runs.csv",
 		"c05-high-freq-doctype-calibration-reviews.csv",

@@ -110,7 +110,7 @@
 - 若某文种候选不足、未完成 c03 入库或无人工采纳标签，`pass_fail` 必须填 `blocked` 或 `insufficient_evidence`。
 - `evidence_refs` 对 `pass` / `fail` 决策必须使用分号分隔的 `run:<run_id>;review:<review_record_id>;variant:<variant_id>` 引用格式；其中 `variant:<variant_id>` 保留提示变体表中的完整 `variant_id`（例如 `variant:notice-topk3`），不得剥掉 `variant:` 前缀；被引用的运行记录、人工评分记录与提示变体必须真实存在，且评分记录必须引用同一组运行记录。
 - `pass` / `fail` 决策必须至少引用两个同一 `comparison_group` 的 `variant:<variant_id>`，且至少包含一个非 `baseline` 对比轴（`topk` / `prompt_total_chars` / `contract_wording` / `combined`），避免只拿单个默认提示变体伪装成校准。
-- 每个被引用的提示变体都必须被 `evidence_refs` 中的已完成模型运行覆盖；被选定的 `selected_topk`、`selected_prompt_total_chars`、`selected_contract_version` 必须匹配其中一个被引用变体。
+- 每个被引用的提示变体都必须为 `variant_status=ready_for_run`，并被 `evidence_refs` 中的已完成模型运行覆盖；被选定的 `selected_topk`、`selected_prompt_total_chars`、`selected_contract_version` 必须匹配其中一个被引用变体；`planned` / `retired` 变体不得进入校准决策证据。
 - `run_count`、`adoption_rate`、`median_first_token_ms`、`p95_total_generation_ms` 的聚合口径只统计匹配 `selected_topk` / `selected_prompt_total_chars` / `selected_contract_version` 的已选变体运行；其它被引用运行仅用于证明对比变体已实测。
 
 ## 机器校验闸门
@@ -128,7 +128,7 @@
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
 - 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 中匹配已选变体的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。
 - `evidence_refs` 的每个 `run:<run_id>` 必须指向同文种、已完成且其 `prompt_variant_id` 已列入 `variant:<variant_id>` 引用集合的目标模型运行；每个被引用运行都必须有对应的 `review:<review_record_id>` 人工评分，且评分记录必须指向同一组运行记录。
-- `evidence_refs` 的每个 `variant:<variant_id>` 必须指向同文种 / 子类、同一对比组的提示变体；至少两个变体必须被引用运行实际覆盖，并且被选定的 TopK / 提示总长 / 契约版本必须来自其中一个变体。
+- `evidence_refs` 的每个 `variant:<variant_id>` 必须指向同文种 / 子类、同一对比组且 `variant_status=ready_for_run` 的提示变体；至少两个变体必须被引用运行实际覆盖，并且被选定的 TopK / 提示总长 / 契约版本必须来自其中一个变体。
 - 采纳率按引用评分记录中 `counts_as_adopted=true` 的占比计算，可保留两位小数；首包耗时中位数按引用运行排序后的常规中位数取整，P95 总耗时按 nearest-rank 口径计算。
 - `tasks.md` 中 7.3 只有在 9 个高频文种都存在 `pass` 校准决策时才能勾选；否则测试会失败。
 

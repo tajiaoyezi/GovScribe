@@ -810,6 +810,7 @@ func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *test
 			contractVersion:     "contract:v2026-06-20-r1",
 			comparisonGroup:     "notice-topk-calibration",
 			comparisonAxis:      "topk",
+			status:              "ready_for_run",
 		},
 		"variant:notice-topk5": {
 			id:                  "variant:notice-topk5",
@@ -821,6 +822,7 @@ func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *test
 			contractVersion:     "contract:v2026-06-20-r1",
 			comparisonGroup:     "notice-topk-calibration",
 			comparisonAxis:      "topk",
+			status:              "ready_for_run",
 		},
 	}
 	runs := []calibrationRunEvidence{
@@ -837,10 +839,19 @@ func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *test
 		t.Fatalf("expected comparable variant evidence to pass: %v", err)
 	}
 
+	plannedVariants := map[string]calibrationVariant{}
+	for id, variant := range variants {
+		plannedVariants[id] = variant
+	}
+	plannedVariant := plannedVariants["variant:notice-topk5"]
+	plannedVariant.status = "planned"
+	plannedVariants["variant:notice-topk5"] = plannedVariant
+
 	tests := []struct {
-		name string
-		refs calibrationEvidenceRefs
-		runs []calibrationRunEvidence
+		name     string
+		refs     calibrationEvidenceRefs
+		runs     []calibrationRunEvidence
+		variants map[string]calibrationVariant
 	}{
 		{
 			name: "missing variant refs",
@@ -864,10 +875,20 @@ func TestC05CalibrationDecisionVariantEvidenceRequiresComparableVariants(t *test
 			refs: refs,
 			runs: runs[:1],
 		},
+		{
+			name:     "variant status not ready for run",
+			refs:     refs,
+			runs:     runs,
+			variants: plannedVariants,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := calibrationDecisionVariantEvidenceError(tc.refs, tc.runs, variants, "通知", "工作通知", 3, 6000, "contract:v2026-06-20-r1"); err == nil {
+			variantSet := variants
+			if tc.variants != nil {
+				variantSet = tc.variants
+			}
+			if err := calibrationDecisionVariantEvidenceError(tc.refs, tc.runs, variantSet, "通知", "工作通知", 3, 6000, "contract:v2026-06-20-r1"); err == nil {
 				t.Fatalf("expected invalid variant evidence to be rejected")
 			}
 		})
@@ -1315,6 +1336,9 @@ func calibrationDecisionVariantEvidenceError(refs calibrationEvidenceRefs, runs 
 		}
 		if variant.doctype != doctype {
 			return fmt.Errorf("variant %s belongs to doctype %s, want %s", variantID, variant.doctype, doctype)
+		}
+		if strings.TrimSpace(variant.status) != "ready_for_run" {
+			return fmt.Errorf("variant %s status = %s, want ready_for_run", variantID, variant.status)
 		}
 		if subtype != "" && variant.subtype != subtype {
 			return fmt.Errorf("variant %s belongs to subtype %s, want %s", variantID, variant.subtype, subtype)

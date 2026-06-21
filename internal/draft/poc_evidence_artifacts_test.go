@@ -237,6 +237,49 @@ func TestC05PrivateModelPoCEvidenceRowsStayTraceableWhenPresent(t *testing.T) {
 	}
 }
 
+func TestC05PrivateModelCalibrationVariantMatching(t *testing.T) {
+	variants := map[string]calibrationVariant{
+		"variant:notice-topk3-v1": {
+			id:               "variant:notice-topk3-v1",
+			doctype:          "通知",
+			subtype:          "工作通知",
+			topK:             3,
+			promptTotalChars: 6000,
+			contractVersion:  "contract:v2026-06-20-r1",
+		},
+	}
+
+	if !hasMatchingC05PrivateModelCalibrationVariant(variants, calibrationVariant{
+		id:               "variant:notice-topk3-v1",
+		doctype:          "通知",
+		subtype:          "工作通知",
+		topK:             3,
+		promptTotalChars: 6000,
+		contractVersion:  "contract:v2026-06-20-r1",
+	}) {
+		t.Fatalf("expected identical private model run variant settings to match")
+	}
+
+	rejected := []struct {
+		name string
+		run  calibrationVariant
+	}{
+		{name: "unknown variant", run: calibrationVariant{id: "variant:missing", doctype: "通知", subtype: "工作通知", topK: 3, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1"}},
+		{name: "doctype mismatch", run: calibrationVariant{id: "variant:notice-topk3-v1", doctype: "请示", subtype: "工作通知", topK: 3, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1"}},
+		{name: "subtype mismatch", run: calibrationVariant{id: "variant:notice-topk3-v1", doctype: "通知", subtype: "会议通知", topK: 3, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1"}},
+		{name: "topk mismatch", run: calibrationVariant{id: "variant:notice-topk3-v1", doctype: "通知", subtype: "工作通知", topK: 5, promptTotalChars: 6000, contractVersion: "contract:v2026-06-20-r1"}},
+		{name: "prompt length mismatch", run: calibrationVariant{id: "variant:notice-topk3-v1", doctype: "通知", subtype: "工作通知", topK: 3, promptTotalChars: 8000, contractVersion: "contract:v2026-06-20-r1"}},
+		{name: "contract mismatch", run: calibrationVariant{id: "variant:notice-topk3-v1", doctype: "通知", subtype: "工作通知", topK: 3, promptTotalChars: 6000, contractVersion: "contract:v2026-06-21-r2"}},
+	}
+	for _, tc := range rejected {
+		t.Run(tc.name, func(t *testing.T) {
+			if hasMatchingC05PrivateModelCalibrationVariant(variants, tc.run) {
+				t.Fatalf("expected %s to be rejected", tc.name)
+			}
+		})
+	}
+}
+
 func TestC05XinchuangRuntimePoCEvidenceRowsStayTraceableWhenPresent(t *testing.T) {
 	runs := readC05XinchuangRuntimeRuns(t)
 
@@ -375,6 +418,7 @@ type c05XinchuangRuntimeRun struct {
 func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 	t.Helper()
 	readyC03Queries := readReadyC05CalibrationCandidateQueries(t)
+	variants := readC05CalibrationVariants(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-private-model-runs.csv")
 	index := csvIndex(header)
 	runs := map[string]c05PrivateModelRun{}
@@ -408,9 +452,16 @@ func readC05PrivateModelRuns(t *testing.T) map[string]c05PrivateModelRun {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "private model runs", "c03_query_id", rowNumber)
 			requireReadyC05CalibrationCandidateQuery(t, readyC03Queries, doctype, c03QueryID, "private model runs", rowNumber)
 		}
-		for _, field := range []string{"topk", "prompt_total_chars"} {
-			requirePositiveIntCell(t, row, index, field, rowNumber)
-		}
+		topK := requirePositiveIntCell(t, row, index, "topk", rowNumber)
+		promptTotalChars := requirePositiveIntCell(t, row, index, "prompt_total_chars", rowNumber)
+		requireMatchingC05PrivateModelCalibrationVariant(t, variants, calibrationVariant{
+			id:               row[index["prompt_variant_id"]],
+			doctype:          doctype,
+			subtype:          row[index["subtype"]],
+			topK:             topK,
+			promptTotalChars: promptTotalChars,
+			contractVersion:  row[index["contract_version"]],
+		}, rowNumber)
 		streamCompleted, err := strconv.ParseBool(requiredCell(t, row, index, "stream_completed", rowNumber))
 		if err != nil {
 			t.Fatalf("private model runs row %d stream_completed = %q, want boolean: %v", rowNumber, row[index["stream_completed"]], err)
@@ -491,6 +542,25 @@ func readC05PrivateModelReviews(t *testing.T, runs map[string]c05PrivateModelRun
 		}
 	}
 	return reviews
+}
+
+func requireMatchingC05PrivateModelCalibrationVariant(t *testing.T, variants map[string]calibrationVariant, run calibrationVariant, rowNumber int) {
+	t.Helper()
+	if !hasMatchingC05PrivateModelCalibrationVariant(variants, run) {
+		t.Fatalf("private model runs row %d prompt_variant_id = %q does not match registered calibration variant settings", rowNumber, run.id)
+	}
+}
+
+func hasMatchingC05PrivateModelCalibrationVariant(variants map[string]calibrationVariant, run calibrationVariant) bool {
+	variant, ok := variants[strings.TrimSpace(run.id)]
+	if !ok {
+		return false
+	}
+	return variant.doctype == run.doctype &&
+		variant.subtype == strings.TrimSpace(run.subtype) &&
+		variant.topK == run.topK &&
+		variant.promptTotalChars == run.promptTotalChars &&
+		variant.contractVersion == strings.TrimSpace(run.contractVersion)
 }
 
 func readC05XinchuangRuntimeRuns(t *testing.T) map[string]c05XinchuangRuntimeRun {

@@ -48,9 +48,10 @@
 
 `private-model-decisions.csv` 一旦声明 `pass` / `fail`，必须满足：
 
-- `evidence_refs` 使用 `run:<run_id>;review:<review_record_id>` 格式。
+- `evidence_refs` 使用 `run:<run_id>;review:<review_record_id>;variant:<variant_id>` 格式。
 - `model_profile` 必须使用 `<model_provider>/<model_name>/<model_backend>` 格式，与被引用运行记录三列拼接结果一致。
 - 被引用运行与评分必须存在，且属于同一文种、同一模型画像。
+- 被引用运行的 `prompt_variant_id` 必须全部出现在 `variant:<variant_id>` 引用中，且每个 `variant:<variant_id>` 必须能反查到同文种、同子类、同 TopK、同提示总长、同契约版本的已登记校准提示变体。
 - `run_count`、`adoption_rate`、`average_rubric_score` 必须能由引用记录反算得到。
 - `adoption_rate` 为 0-1 比例，`average_rubric_score` 为四维 rubric 的 1-5 均分。
 - 8.1 只有在 9 个高频文种都有 `pass` 或明确 `fail` 结论、且每个结论都能反查模型运行与人工评分时才能勾选。

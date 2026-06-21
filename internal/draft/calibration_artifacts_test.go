@@ -959,6 +959,38 @@ func TestC05ReadyCalibrationCandidateQueryMatching(t *testing.T) {
 	}
 }
 
+func TestC05CalibrationRunVariantEvidenceRequiresReadyForRunVariant(t *testing.T) {
+	variant := calibrationVariant{
+		id:                  "variant:notice-planned",
+		doctype:             "通知",
+		subtype:             "工作通知",
+		topK:                3,
+		promptTotalChars:    6000,
+		promptTokenEstimate: 1800,
+		contractVersion:     "contract:v2026-06-20-r1",
+		status:              "planned",
+	}
+	run := calibrationVariant{
+		id:                  variant.id,
+		doctype:             variant.doctype,
+		subtype:             variant.subtype,
+		topK:                variant.topK,
+		promptTotalChars:    variant.promptTotalChars,
+		promptTokenEstimate: variant.promptTokenEstimate,
+		contractVersion:     variant.contractVersion,
+	}
+
+	err := calibrationRunVariantEvidenceError(variant, run)
+	if err == nil || !strings.Contains(err.Error(), "ready_for_run") {
+		t.Fatalf("planned variant error = %v, want ready_for_run rejection", err)
+	}
+
+	variant.status = "ready_for_run"
+	if err := calibrationRunVariantEvidenceError(variant, run); err != nil {
+		t.Fatalf("ready_for_run variant should be accepted, got %v", err)
+	}
+}
+
 func c05HighFreqDoctypeSeen() map[string]bool {
 	return map[string]bool{
 		"通知": false, "请示": false, "报告": false, "函": false, "会议纪要": false,
@@ -1036,6 +1068,7 @@ type calibrationVariant struct {
 	contractVersion     string
 	comparisonGroup     string
 	comparisonAxis      string
+	status              string
 }
 
 func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
@@ -1087,6 +1120,7 @@ func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
 			contractVersion:     contractVersion,
 			comparisonGroup:     comparisonGroup,
 			comparisonAxis:      axis,
+			status:              status,
 		}
 	}
 	return variants
@@ -1098,14 +1132,24 @@ func requireMatchingC05CalibrationVariant(t *testing.T, variants map[string]cali
 	if !ok {
 		t.Fatalf("%s row %d prompt_variant_id = %q has no matching calibration variant", source, rowNumber, run.id)
 	}
+	if err := calibrationRunVariantEvidenceError(variant, run); err != nil {
+		t.Fatalf(
+			"%s row %d prompt_variant_id = %q is not valid run evidence: %v",
+			source, rowNumber, run.id, err,
+		)
+	}
+}
+
+func calibrationRunVariantEvidenceError(variant, run calibrationVariant) error {
+	if strings.TrimSpace(variant.status) != "ready_for_run" {
+		return fmt.Errorf("variant status = %q, want ready_for_run before model run evidence", variant.status)
+	}
 	if variant.doctype != run.doctype || variant.subtype != strings.TrimSpace(run.subtype) ||
 		variant.topK != run.topK || variant.promptTotalChars != run.promptTotalChars ||
 		variant.promptTokenEstimate != run.promptTokenEstimate || variant.contractVersion != strings.TrimSpace(run.contractVersion) {
-		t.Fatalf(
-			"%s row %d prompt_variant_id = %q does not match registered variant settings",
-			source, rowNumber, run.id,
-		)
+		return fmt.Errorf("run settings do not match registered variant settings")
 	}
+	return nil
 }
 
 func requiredTraceableC05CalibrationVersion(t *testing.T, row []string, index map[string]int, field string, rowNumber int) string {

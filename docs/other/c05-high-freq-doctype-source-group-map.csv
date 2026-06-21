@@ -1,0 +1,10 @@
+source_group_ref,candidate_batch,doctype,raw_package_count,readable_package_count,manual_split_required,include_in_candidate_counts,mapping_status,next_c03_gate,mapping_code
+local-corpus-20260620-notice,local-corpus-20260620,通知,45,43,true,true,ready_for_desensitization,pending_desensitization,mixed_group_sampled
+local-corpus-20260620-request,local-corpus-20260620,请示,10,10,true,true,ready_for_desensitization,pending_desensitization,mixed_group_sampled
+local-corpus-20260620-report,local-corpus-20260620,报告,10,10,false,true,ready_for_desensitization,pending_desensitization,single_doctype_group
+local-corpus-20260620-letter,local-corpus-20260620,函,10,10,false,true,ready_for_desensitization,pending_desensitization,single_doctype_group
+local-corpus-20260620-minutes,local-corpus-20260620,会议纪要,12,12,true,true,ready_for_desensitization,pending_desensitization,mixed_group_sampled
+local-corpus-20260620-circular,local-corpus-20260620,通报,1,1,true,true,needs_more_corpus,insufficient,mixed_group_sampled
+local-corpus-20260620-reply,local-corpus-20260620,批复,10,10,true,true,ready_for_desensitization,pending_desensitization,mixed_group_sampled
+local-corpus-20260620-speech,local-corpus-20260620,讲话稿,0,0,false,false,missing_corpus,pending_corpus,missing_source
+local-corpus-20260620-plan,local-corpus-20260620,方案,0,0,false,false,missing_corpus,pending_corpus,missing_source

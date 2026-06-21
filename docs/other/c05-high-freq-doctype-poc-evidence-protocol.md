@@ -36,6 +36,7 @@
 - `deployment_scope` 必须为 `private` / `domestic` / `xinchuang_private` 之一。
 - `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `c03_query_id` 必须指向 c03 检索证据，且必须匹配同文种候选素材表中 `gate_status=ready_for_model_run` 的 `c03_query_ref`；不能是 `pending`、本地路径或 `各类文件/`。
+- `prompt_variant_id` 必须引用 `docs/other/c05-high-freq-doctype-calibration-variants.csv` 中已登记的提示变体，且文种、子类、TopK、提示总长与契约版本必须与运行记录一致；不得临时写入未经登记的提示参数。
 - 成功运行必须有正数 `first_token_ms`、`total_generation_ms`、`completion_chars` 和脱敏 `output_ref`；失败运行必须记录 `error_reason`。
 
 `private-model-reviews.csv` 一旦填写，必须满足：

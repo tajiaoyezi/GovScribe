@@ -90,6 +90,7 @@
 - `run_id` 必须唯一，并能追溯到模型输出对象或日志。
 - `c03_query_id` 必须指向 c03 检索结果，且必须匹配同文种候选素材表中 `gate_status=ready_for_model_run` 的 `c03_query_ref`；不得填本地原文路径。
 - `prompt_variant_id` 必须引用 `calibration-variants.csv` 中已登记的变体，且文种、子类、TopK、提示总长、token 估算与契约版本必须一致。
+- 被 `prompt_variant_id` 引用的提示变体必须已标记为 `variant_status=ready_for_run`；`planned` 只代表实验设计，`retired` 不再作为可运行证据，二者均不得被模型运行记录引用。
 - `model_endpoint_evidence_ref` 必须指向真实目标模型端点、部署清单或网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `content_security_level` 必须来自 c06 上下文，取值为 `非密` / `敏感` / `涉密`。
 - `first_token_ms` 与 `total_generation_ms` 必须来自真实运行计时；不得用估算值。
@@ -123,7 +124,7 @@
 - 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
 - 在 7.3 尚未完成前，提示变体表必须为每个 c05 高频文种登记至少一个 `planned` baseline 与一个非 baseline 对比轴，并保持同一文种内 `comparison_group` 可比较；没有 c03 `ready_for_model_run` 证据时不得把 planned 变体升级为 `ready_for_run`。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。
-- 模型运行记录的 `c03_query_id` 必须能回查到同文种 `ready_for_model_run` 候选行，避免绕过脱敏批次与 c03 可检索数量门禁直接登记目标模型运行；`prompt_variant_id` 必须能回查到同文种 / 子类且参数一致的提示变体，避免运行记录临时写入未经登记的 TopK、提示总长或契约措辞版本。
+- 模型运行记录的 `c03_query_id` 必须能回查到同文种 `ready_for_model_run` 候选行，避免绕过脱敏批次与 c03 可检索数量门禁直接登记目标模型运行；`prompt_variant_id` 必须能回查到同文种 / 子类、参数一致且 `variant_status=ready_for_run` 的提示变体，避免运行记录临时写入未经登记或尚停留在 planned 设计态的 TopK、提示总长或契约措辞版本。
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
 - 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 中匹配已选变体的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。
 - `evidence_refs` 的每个 `run:<run_id>` 必须指向同文种、已完成且其 `prompt_variant_id` 已列入 `variant:<variant_id>` 引用集合的目标模型运行；每个被引用运行都必须有对应的 `review:<review_record_id>` 人工评分，且评分记录必须指向同一组运行记录。

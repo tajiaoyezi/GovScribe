@@ -28,6 +28,7 @@
 - `docs/other/c05-high-freq-doctype-calibration-candidates.csv`：候选素材与 c03 入库状态；只记录聚合数量、抽象批次、c03 gate 与受控 candidate gate code，不记录自由文本说明。
 - `docs/other/c05-high-freq-doctype-corpus-intake-readiness.csv`：原始候选素材到清洗 / 脱敏 / c03 入库的准备清单；只记录抽象批次、聚合数量、缺口、责任状态、下一步 gate 与受控 readiness code，不记录本地路径、原始文件名、正文标题或自由文本说明。
 - `docs/other/c05-high-freq-doctype-local-package-audit.csv`：本地候选公文包的聚合可抽取性审计；只记录抽象批次、抽象来源分组、直接可抽取 / 需转换 / 阻塞数量与受控 audit code，用于解释候选素材表中的 raw/readable 差异。
+- `docs/other/c05-high-freq-doctype-source-group-map.csv`：本地候选包到 c05 文种的抽象来源分组映射；只记录抽象来源分组、是否需要人工拆分、是否计入候选数量与下一步 c03 gate，不记录原始目录名、原始文件名、正文标题或正文片段。
 - `docs/other/c05-high-freq-doctype-calibration-variants.csv`：校准候选提示变体矩阵。
 - `docs/other/c05-high-freq-doctype-calibration-runs.csv`：目标模型运行记录。
 - `docs/other/c05-high-freq-doctype-calibration-reviews.csv`：人工评分与采纳标签。
@@ -72,6 +73,16 @@
 - `package_audit_status` 取值：`ready_for_desensitization` / `needs_more_corpus` / `missing_corpus`，必须与入库准备清单的 `intake_stage` 同口径。
 - `package_audit_code` 只允许 `all_packages_extractable` / `partial_extraction_blocked` / `missing_corpus` 三类受控代码；存在 `blocked_package_count > 0` 时必须使用 `partial_extraction_blocked`，不得用自由文本说明原始标题、正文片段或文件名。
 - 本审计只解释本地候选素材 raw/readable 差异，不代表已完成脱敏、c03 入库或目标模型实测；不得将 `package_audit_status=ready_for_desensitization` 误用为 `ready_for_model_run`。
+
+### 来源分组映射
+
+- `source_group_ref` 必须引用语料入库准备清单与本地候选包审计中同名的抽象来源分组；不得记录本地原始目录、原始文件名、正文标题或 Office / PDF 原文扩展名。
+- `candidate_batch`、`doctype`、`raw_package_count`、`readable_package_count` 必须与同 `source_group_ref` 的语料入库准备清单保持一致。
+- `manual_split_required` 表示该抽象来源分组来自需人工拆分的混合候选包；它只说明后续清洗 / 脱敏前需要按文种复核，不代表已经完成脱敏或 c03 入库。
+- `include_in_candidate_counts=true` 只表示该抽象分组已计入候选素材聚合数量；原始候选为 0 的文种必须为 `false`。
+- `mapping_status` 取值：`ready_for_desensitization` / `needs_more_corpus` / `missing_corpus`，必须与入库准备清单的 `intake_stage` 同口径。
+- `next_c03_gate` 必须与入库准备清单一致，只能为 `pending_desensitization` / `insufficient` / `pending_corpus`；不得把来源分组映射误写成 `ready_for_model_run`。
+- `mapping_code` 只允许 `single_doctype_group` / `mixed_group_sampled` / `missing_source` 三类受控代码。`manual_split_required=true` 必须使用 `mixed_group_sampled`；原始候选为 0 必须使用 `missing_source`。
 
 ### 提示变体矩阵
 
@@ -120,6 +131,7 @@
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；`candidate_gate_code` 必须为受控代码并与 `gate_status` / 数量自洽，不得用自由文本说明替代。
 - 语料入库准备清单必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其 `readable_gap_to_100`、`intake_stage` 与 `next_c03_gate` 必须自洽，避免把原始候选目录误当作已脱敏 / 已入 c03 的模型运行前置证据。
 - 本地候选包审计必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名；其直接可抽取 / 需转换 / 阻塞数量必须能反算候选素材表中的 raw/readable 数量，避免“同一公文包多文件容器”或“有原文但抽取阻塞”造成数量口径漂移。
+- 来源分组映射必须覆盖语料入库准备清单与本地候选包审计引用的全部 `source_group_ref`，且只记录抽象分组、聚合数量、是否需人工拆分、是否计入候选数量与下一步 gate；混合候选包必须显式标记 `manual_split_required=true`，避免把混合目录未拆分结果直接当作单一文种 c03-ready 证据。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
 - 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
 - 在 7.3 尚未完成前，提示变体表必须为每个 c05 高频文种登记至少一个 `planned` baseline 与一个非 baseline 对比轴，并保持同一文种内 `comparison_group` 可比较；没有 c03 `ready_for_model_run` 证据时不得把 planned 变体升级为 `ready_for_run`。

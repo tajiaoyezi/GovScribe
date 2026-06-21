@@ -30,6 +30,11 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 			"blocked_package_count", "readable_package_count", "readable_gap_to_100",
 			"package_audit_status", "package_audit_code",
 		},
+		"c05-high-freq-doctype-source-group-map.csv": {
+			"source_group_ref", "candidate_batch", "doctype", "raw_package_count",
+			"readable_package_count", "manual_split_required", "include_in_candidate_counts",
+			"mapping_status", "next_c03_gate", "mapping_code",
+		},
 		"c05-high-freq-doctype-calibration-runs.csv": {
 			"run_id", "run_date", "doctype", "subtype", "source_sample_id", "c03_query_id",
 			"prompt_variant_id", "topk", "prompt_total_chars", "prompt_token_estimate",
@@ -436,6 +441,129 @@ func TestC05CorpusIntakeReadinessRowsStayAggregateAndActionable(t *testing.T) {
 	}
 }
 
+func TestC05SourceGroupMapAnchorsLocalCorpusWithoutRawReferences(t *testing.T) {
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-source-group-map.csv")
+	if len(rows) != 9 {
+		t.Fatalf("source group map rows = %d, want 9 high-frequency doctypes", len(rows))
+	}
+
+	index := csvIndex(header)
+	intakeSummaries := readC05CorpusIntakeSummaries(t)
+	auditSummaries := readC05LocalPackageAuditSummaries(t)
+	allowedStatuses := map[string]bool{
+		"ready_for_desensitization": true,
+		"needs_more_corpus":         true,
+		"missing_corpus":            true,
+	}
+	allowedCodes := map[string]bool{
+		"single_doctype_group": true,
+		"mixed_group_sampled":  true,
+		"missing_source":       true,
+	}
+	rawArtifactExtension := regexp.MustCompile(`(?i)\.(docx?|pdf|xlsx|et)\b`)
+	seen := map[string]bool{}
+
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
+		if seen[sourceGroupRef] {
+			t.Fatalf("source group map row %d duplicates source_group_ref %q", rowNumber, sourceGroupRef)
+		}
+		seen[sourceGroupRef] = true
+		expected, ok := intakeSummaries[sourceGroupRef]
+		if !ok {
+			t.Fatalf("source group map row %d source_group_ref %q is not referenced by corpus intake readiness", rowNumber, sourceGroupRef)
+		}
+		audit, ok := auditSummaries[sourceGroupRef]
+		if !ok {
+			t.Fatalf("source group map row %d source_group_ref %q is not referenced by local package audit", rowNumber, sourceGroupRef)
+		}
+
+		for field, value := range map[string]string{
+			"source_group_ref": sourceGroupRef,
+			"candidate_batch":  requiredCell(t, row, index, "candidate_batch", rowNumber),
+			"mapping_code":     requiredCell(t, row, index, "mapping_code", rowNumber),
+		} {
+			if c05RawCorpusReferencePattern.MatchString(value) {
+				t.Fatalf("source group map row %d field %s exposes local raw corpus directory: %q", rowNumber, field, value)
+			}
+			if rawArtifactExtension.MatchString(value) {
+				t.Fatalf("source group map row %d field %s exposes raw file extension: %q", rowNumber, field, value)
+			}
+		}
+
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		requireKnownC05Doctype(t, doctype, "source group map", rowNumber)
+		if doctype != expected.doctype {
+			t.Fatalf("source group map row %d doctype = %q, want %q from corpus intake readiness", rowNumber, doctype, expected.doctype)
+		}
+		if doctype != audit.doctype {
+			t.Fatalf("source group map row %d doctype = %q, want %q from local package audit", rowNumber, doctype, audit.doctype)
+		}
+		if got := row[index["candidate_batch"]]; got != expected.candidateBatch {
+			t.Fatalf("source group map row %d candidate_batch = %q, want %q from corpus intake readiness", rowNumber, got, expected.candidateBatch)
+		}
+		if got := row[index["candidate_batch"]]; got != audit.candidateBatch {
+			t.Fatalf("source group map row %d candidate_batch = %q, want %q from local package audit", rowNumber, got, audit.candidateBatch)
+		}
+		rawPackageCount := requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber)
+		readablePackageCount := requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber)
+		if rawPackageCount != expected.rawPackageCount || readablePackageCount != expected.readablePackageCount {
+			t.Fatalf("source group map row %d counts raw/readable = %d/%d, want %d/%d from corpus intake readiness", rowNumber, rawPackageCount, readablePackageCount, expected.rawPackageCount, expected.readablePackageCount)
+		}
+		if rawPackageCount != audit.rawPackageCount || readablePackageCount != audit.readablePackageCount {
+			t.Fatalf("source group map row %d counts raw/readable = %d/%d, want %d/%d from local package audit", rowNumber, rawPackageCount, readablePackageCount, audit.rawPackageCount, audit.readablePackageCount)
+		}
+
+		manualSplitRequired := requireBoolCell(t, row, index, "manual_split_required", rowNumber)
+		includeInCandidateCounts := requireBoolCell(t, row, index, "include_in_candidate_counts", rowNumber)
+		mappingStatus := requiredCell(t, row, index, "mapping_status", rowNumber)
+		if !allowedStatuses[mappingStatus] {
+			t.Fatalf("source group map row %d mapping_status = %q, want known status", rowNumber, mappingStatus)
+		}
+		if mappingStatus != expected.intakeStage {
+			t.Fatalf("source group map row %d mapping_status = %q, want %q from corpus intake readiness", rowNumber, mappingStatus, expected.intakeStage)
+		}
+		if mappingStatus != audit.packageAuditStatus {
+			t.Fatalf("source group map row %d mapping_status = %q, want %q from local package audit", rowNumber, mappingStatus, audit.packageAuditStatus)
+		}
+		if nextGate := requiredCell(t, row, index, "next_c03_gate", rowNumber); nextGate != expected.nextC03Gate {
+			t.Fatalf("source group map row %d next_c03_gate = %q, want %q from corpus intake readiness", rowNumber, nextGate, expected.nextC03Gate)
+		}
+		mappingCode := requiredCell(t, row, index, "mapping_code", rowNumber)
+		if !allowedCodes[mappingCode] {
+			t.Fatalf("source group map row %d mapping_code = %q, want controlled mapping code", rowNumber, mappingCode)
+		}
+
+		if rawPackageCount == 0 {
+			if includeInCandidateCounts || manualSplitRequired || mappingStatus != "missing_corpus" || mappingCode != "missing_source" {
+				t.Fatalf("source group map row %d missing source must not be included or require split", rowNumber)
+			}
+			continue
+		}
+		if !includeInCandidateCounts {
+			t.Fatalf("source group map row %d has raw candidates but include_in_candidate_counts=false", rowNumber)
+		}
+		if manualSplitRequired && mappingCode != "mixed_group_sampled" {
+			t.Fatalf("source group map row %d manual split requires mixed_group_sampled code", rowNumber)
+		}
+		if !manualSplitRequired && mappingCode != "single_doctype_group" {
+			t.Fatalf("source group map row %d single-doctype mapping requires single_doctype_group code", rowNumber)
+		}
+	}
+
+	for sourceGroupRef := range intakeSummaries {
+		if !seen[sourceGroupRef] {
+			t.Fatalf("source group map is missing corpus intake source_group_ref %q", sourceGroupRef)
+		}
+	}
+	for sourceGroupRef := range auditSummaries {
+		if !seen[sourceGroupRef] {
+			t.Fatalf("source group map is missing local package audit source_group_ref %q", sourceGroupRef)
+		}
+	}
+}
+
 func TestC05CalibrationVariantsPlanComparableCoverageForEveryDoctype(t *testing.T) {
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-variants.csv")
 	index := csvIndex(header)
@@ -498,6 +626,23 @@ type c05CalibrationCandidateSummary struct {
 	readablePackageCount int
 }
 
+type c05CorpusIntakeSummary struct {
+	candidateBatch       string
+	doctype              string
+	rawPackageCount      int
+	readablePackageCount int
+	intakeStage          string
+	nextC03Gate          string
+}
+
+type c05LocalPackageAuditSummary struct {
+	candidateBatch       string
+	doctype              string
+	rawPackageCount      int
+	readablePackageCount int
+	packageAuditStatus   string
+}
+
 func readC05CalibrationCandidateSummaries(t *testing.T) map[string]c05CalibrationCandidateSummary {
 	t.Helper()
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-candidates.csv")
@@ -513,6 +658,51 @@ func readC05CalibrationCandidateSummaries(t *testing.T) map[string]c05Calibratio
 			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
 			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
 			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+		}
+	}
+	return summaries
+}
+
+func readC05CorpusIntakeSummaries(t *testing.T) map[string]c05CorpusIntakeSummary {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-corpus-intake-readiness.csv")
+	index := csvIndex(header)
+	summaries := map[string]c05CorpusIntakeSummary{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
+		if summaries[sourceGroupRef].candidateBatch != "" {
+			t.Fatalf("corpus intake readiness row %d duplicates source_group_ref %q", rowNumber, sourceGroupRef)
+		}
+		summaries[sourceGroupRef] = c05CorpusIntakeSummary{
+			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
+			doctype:              requiredCell(t, row, index, "doctype", rowNumber),
+			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
+			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+			intakeStage:          requiredCell(t, row, index, "intake_stage", rowNumber),
+			nextC03Gate:          requiredCell(t, row, index, "next_c03_gate", rowNumber),
+		}
+	}
+	return summaries
+}
+
+func readC05LocalPackageAuditSummaries(t *testing.T) map[string]c05LocalPackageAuditSummary {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-local-package-audit.csv")
+	index := csvIndex(header)
+	summaries := map[string]c05LocalPackageAuditSummary{}
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		sourceGroupRef := requiredCell(t, row, index, "source_group_ref", rowNumber)
+		if summaries[sourceGroupRef].candidateBatch != "" {
+			t.Fatalf("local package audit row %d duplicates source_group_ref %q", rowNumber, sourceGroupRef)
+		}
+		summaries[sourceGroupRef] = c05LocalPackageAuditSummary{
+			candidateBatch:       requiredCell(t, row, index, "candidate_batch", rowNumber),
+			doctype:              requiredCell(t, row, index, "doctype", rowNumber),
+			rawPackageCount:      requireNonNegativeIntCell(t, row, index, "raw_package_count", rowNumber),
+			readablePackageCount: requireNonNegativeIntCell(t, row, index, "readable_package_count", rowNumber),
+			packageAuditStatus:   requiredCell(t, row, index, "package_audit_status", rowNumber),
 		}
 	}
 	return summaries
@@ -907,6 +1097,7 @@ func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 		"c05-high-freq-doctype-calibration-candidates.csv",
 		"c05-high-freq-doctype-corpus-intake-readiness.csv",
 		"c05-high-freq-doctype-local-package-audit.csv",
+		"c05-high-freq-doctype-source-group-map.csv",
 		"c05-high-freq-doctype-calibration-variants.csv",
 		"c05-high-freq-doctype-calibration-runs.csv",
 		"c05-high-freq-doctype-calibration-reviews.csv",

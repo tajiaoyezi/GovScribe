@@ -36,7 +36,7 @@
 - `deployment_scope` 必须为 `private` / `domestic` / `xinchuang_private` 之一。
 - `model_endpoint_evidence_ref` 必须指向真实国产 / 私有化模型端点、部署清单或供应商网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `c03_query_id` 必须指向 c03 检索证据，且必须匹配同文种候选素材表中 `gate_status=ready_for_model_run` 的 `c03_query_ref`；不能是 `pending`、本地路径或 `各类文件/`。
-- `prompt_variant_id` 必须引用 `docs/other/c05-high-freq-doctype-calibration-variants.csv` 中已登记的提示变体，且文种、子类、TopK、提示总长与契约版本必须与运行记录一致；不得临时写入未经登记的提示参数。
+- `prompt_variant_id` 必须引用 `docs/other/c05-high-freq-doctype-calibration-variants.csv` 中已登记且 `variant_status=ready_for_run` 的提示变体，且文种、子类、TopK、提示总长与契约版本必须与运行记录一致；不得临时写入未经登记或尚停留在 `planned` 设计态的提示参数。
 - 成功运行必须有正数 `first_token_ms`、`total_generation_ms`、`completion_chars` 和脱敏 `output_ref`；失败运行必须记录 `error_reason`。
 
 `private-model-reviews.csv` 一旦填写，必须满足：
@@ -51,7 +51,7 @@
 - `evidence_refs` 使用 `run:<run_id>;review:<review_record_id>;variant:<variant_id>` 格式。
 - `model_profile` 必须使用 `<model_provider>/<model_name>/<model_backend>` 格式，与被引用运行记录三列拼接结果一致。
 - 被引用运行与评分必须存在，且属于同一文种、同一模型画像。
-- 被引用运行的 `prompt_variant_id` 必须全部出现在 `variant:<variant_id>` 引用中，且每个 `variant:<variant_id>` 必须能反查到同文种、同子类、同 TopK、同提示总长、同契约版本的已登记校准提示变体。
+- 被引用运行的 `prompt_variant_id` 必须全部出现在 `variant:<variant_id>` 引用中，且每个 `variant:<variant_id>` 必须能反查到同文种、同子类、同 TopK、同提示总长、同契约版本且 `variant_status=ready_for_run` 的已登记校准提示变体。
 - `run_count`、`adoption_rate`、`average_rubric_score` 必须能由引用记录反算得到。
 - `adoption_rate` 为 0-1 比例，`average_rubric_score` 为四维 rubric 的 1-5 均分。
 - 8.1 只有在 9 个高频文种都有 `pass` 或明确 `fail` 结论、且每个结论都能反查模型运行与人工评分时才能勾选。

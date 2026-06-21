@@ -26,6 +26,11 @@ func TestC05CalibrationCSVHeadersStayAuditable(t *testing.T) {
 			"completion_chars", "stream_completed", "error_reason", "output_ref",
 			"review_record_id", "notes",
 		},
+		"c05-high-freq-doctype-calibration-variants.csv": {
+			"variant_id", "doctype", "subtype", "topk", "prompt_total_chars",
+			"prompt_token_estimate", "contract_version", "wording_version",
+			"comparison_group", "comparison_axis", "variant_status", "notes",
+		},
 		"c05-high-freq-doctype-calibration-reviews.csv": {
 			"review_record_id", "run_id", "reviewer", "review_date", "doctype_norm_score",
 			"structure_score", "direction_score", "organ_tone_score", "adoption_status",
@@ -182,6 +187,7 @@ func TestC05CalibrationCandidatesCoverAllHighFrequencyDoctypes(t *testing.T) {
 
 func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 	readyC03Queries := readReadyC05CalibrationCandidateQueries(t)
+	variants := readC05CalibrationVariants(t)
 	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-runs.csv")
 	index := csvIndex(header)
 	seenRunIDs := map[string]bool{}
@@ -204,9 +210,18 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 		for _, field := range []string{"model_provider", "model_name", "model_backend", "model_endpoint_evidence_ref"} {
 			requireNoSyntheticPoCEvidence(t, row[index[field]], "calibration runs", field, rowNumber)
 		}
-		for _, field := range []string{"topk", "prompt_total_chars", "prompt_token_estimate"} {
-			requirePositiveIntCell(t, row, index, field, rowNumber)
-		}
+		topK := requirePositiveIntCell(t, row, index, "topk", rowNumber)
+		promptTotalChars := requirePositiveIntCell(t, row, index, "prompt_total_chars", rowNumber)
+		promptTokenEstimate := requirePositiveIntCell(t, row, index, "prompt_token_estimate", rowNumber)
+		requireMatchingC05CalibrationVariant(t, variants, calibrationVariant{
+			id:                  row[index["prompt_variant_id"]],
+			doctype:             doctype,
+			subtype:             row[index["subtype"]],
+			topK:                topK,
+			promptTotalChars:    promptTotalChars,
+			promptTokenEstimate: promptTokenEstimate,
+			contractVersion:     row[index["contract_version"]],
+		}, "calibration runs", rowNumber)
 		c03QueryID := requiredCell(t, row, index, "c03_query_id", rowNumber)
 		if strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
 			t.Fatalf("calibration runs row %d c03_query_id = %q, want c03 retrieval evidence, not local/raw corpus state", rowNumber, c03QueryID)
@@ -235,6 +250,26 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 			for _, field := range []string{"first_token_ms", "total_generation_ms", "completion_chars"} {
 				requireNonNegativeIntCell(t, row, index, field, rowNumber)
 			}
+		}
+	}
+}
+
+func TestC05CalibrationVariantRowsStayAuditableWhenPresent(t *testing.T) {
+	readC05CalibrationVariants(t)
+}
+
+func TestC05CalibrationVariantVersionsRejectOpaqueLabels(t *testing.T) {
+	rejected := []string{"默认值", "默认", "default", "latest", "current", "TBD", "待定", "unknown", "pending"}
+	for _, value := range rejected {
+		if !looksOpaqueC05CalibrationVersion(value) {
+			t.Fatalf("version label %q should be treated as opaque", value)
+		}
+	}
+
+	allowed := []string{"contract:v2026-06-20-r1", "wording:v1.1-notice-rubric-a", "template-object:notice/v3"}
+	for _, value := range allowed {
+		if looksOpaqueC05CalibrationVersion(value) {
+			t.Fatalf("version label %q should be allowed as traceable", value)
 		}
 	}
 }
@@ -411,6 +446,7 @@ func TestC05CalibrationDecisionRowsGateCompletionEvidence(t *testing.T) {
 func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	files := []string{
 		"c05-high-freq-doctype-calibration-candidates.csv",
+		"c05-high-freq-doctype-calibration-variants.csv",
 		"c05-high-freq-doctype-calibration-runs.csv",
 		"c05-high-freq-doctype-calibration-reviews.csv",
 		"c05-high-freq-doctype-calibration-decisions.csv",
@@ -546,6 +582,103 @@ type calibrationReviewEvidence struct {
 type calibrationEvidenceRefs struct {
 	runIDs          []string
 	reviewRecordIDs []string
+}
+
+type calibrationVariant struct {
+	id                  string
+	doctype             string
+	subtype             string
+	topK                int
+	promptTotalChars    int
+	promptTokenEstimate int
+	contractVersion     string
+}
+
+func readC05CalibrationVariants(t *testing.T) map[string]calibrationVariant {
+	t.Helper()
+	header, rows := readCalibrationCSV(t, "c05-high-freq-doctype-calibration-variants.csv")
+	index := csvIndex(header)
+	variants := map[string]calibrationVariant{}
+	readyC03Queries := readReadyC05CalibrationCandidateQueries(t)
+	allowedAxis := map[string]bool{
+		"baseline": true, "topk": true, "prompt_total_chars": true,
+		"contract_wording": true, "combined": true,
+	}
+	allowedStatus := map[string]bool{"planned": true, "ready_for_run": true, "retired": true}
+
+	for rowIndex, row := range rows {
+		rowNumber := rowIndex + 2
+		variantID := requiredCell(t, row, index, "variant_id", rowNumber)
+		if variants[variantID].id != "" {
+			t.Fatalf("calibration variants row %d duplicates variant_id %q", rowNumber, variantID)
+		}
+		doctype := requiredCell(t, row, index, "doctype", rowNumber)
+		requireKnownC05Doctype(t, doctype, "calibration variants", rowNumber)
+		subtype := requiredCell(t, row, index, "subtype", rowNumber)
+		topK := requirePositiveIntCell(t, row, index, "topk", rowNumber)
+		promptTotalChars := requirePositiveIntCell(t, row, index, "prompt_total_chars", rowNumber)
+		promptTokenEstimate := requirePositiveIntCell(t, row, index, "prompt_token_estimate", rowNumber)
+		contractVersion := requiredTraceableC05CalibrationVersion(t, row, index, "contract_version", rowNumber)
+		requiredTraceableC05CalibrationVersion(t, row, index, "wording_version", rowNumber)
+		requiredCell(t, row, index, "comparison_group", rowNumber)
+		axis := requiredCell(t, row, index, "comparison_axis", rowNumber)
+		if !allowedAxis[axis] {
+			t.Fatalf("calibration variants row %d comparison_axis = %q, want known calibration axis", rowNumber, axis)
+		}
+		status := requiredCell(t, row, index, "variant_status", rowNumber)
+		if !allowedStatus[status] {
+			t.Fatalf("calibration variants row %d variant_status = %q, want planned/ready_for_run/retired", rowNumber, status)
+		}
+		requiredCell(t, row, index, "notes", rowNumber)
+		if status == "ready_for_run" && len(readyC03Queries[doctype]) == 0 {
+			t.Fatalf("calibration variants row %d is ready_for_run but %s has no ready c03 candidate", rowNumber, doctype)
+		}
+		variants[variantID] = calibrationVariant{
+			id:                  variantID,
+			doctype:             doctype,
+			subtype:             subtype,
+			topK:                topK,
+			promptTotalChars:    promptTotalChars,
+			promptTokenEstimate: promptTokenEstimate,
+			contractVersion:     contractVersion,
+		}
+	}
+	return variants
+}
+
+func requireMatchingC05CalibrationVariant(t *testing.T, variants map[string]calibrationVariant, run calibrationVariant, source string, rowNumber int) {
+	t.Helper()
+	variant, ok := variants[strings.TrimSpace(run.id)]
+	if !ok {
+		t.Fatalf("%s row %d prompt_variant_id = %q has no matching calibration variant", source, rowNumber, run.id)
+	}
+	if variant.doctype != run.doctype || variant.subtype != strings.TrimSpace(run.subtype) ||
+		variant.topK != run.topK || variant.promptTotalChars != run.promptTotalChars ||
+		variant.promptTokenEstimate != run.promptTokenEstimate || variant.contractVersion != strings.TrimSpace(run.contractVersion) {
+		t.Fatalf(
+			"%s row %d prompt_variant_id = %q does not match registered variant settings",
+			source, rowNumber, run.id,
+		)
+	}
+}
+
+func requiredTraceableC05CalibrationVersion(t *testing.T, row []string, index map[string]int, field string, rowNumber int) string {
+	t.Helper()
+	value := requiredCell(t, row, index, field, rowNumber)
+	if looksOpaqueC05CalibrationVersion(value) {
+		t.Fatalf("calibration variants row %d %s = %q, want traceable version reference", rowNumber, field, value)
+	}
+	return value
+}
+
+func looksOpaqueC05CalibrationVersion(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "默认", "默认值", "default", "latest", "current", "tbd", "todo", "pending", "unknown", "n/a", "na", "待定":
+		return true
+	default:
+		return false
+	}
 }
 
 func readCalibrationRunEvidence(t *testing.T) map[string]calibrationRunEvidence {

@@ -26,6 +26,7 @@
 ## 记录文件
 
 - `docs/other/c05-high-freq-doctype-calibration-candidates.csv`：候选素材与 c03 入库状态。
+- `docs/other/c05-high-freq-doctype-calibration-variants.csv`：校准候选提示变体矩阵。
 - `docs/other/c05-high-freq-doctype-calibration-runs.csv`：目标模型运行记录。
 - `docs/other/c05-high-freq-doctype-calibration-reviews.csv`：人工评分与采纳标签。
 - `docs/other/c05-high-freq-doctype-calibration-decisions.csv`：每个文种的校准结论。
@@ -44,11 +45,21 @@
 - `pending_c03` 必须已有非 `pending` 的 `desensitized_batch_ref`，且 `c03_query_ref` / `c03_retrievable_count` 仍为 `pending`，表示已脱敏但尚未完成 c03 可检索验证。
 - `ready_for_model_run` 必须同时具备非 `pending` 的 `desensitized_batch_ref`、非 `pending` 的 `c03_query_ref` 与正数 `c03_retrievable_count`；只完成本地候选素材盘点或清洗脱敏前，不得把该文种标为可跑目标模型。
 
+### 提示变体矩阵
+
+- `variant_id` 必须唯一；模型运行表中的 `prompt_variant_id` 必须引用这里已登记的变体。
+- `doctype` 必须属于 c05 9 个高频文种；`subtype` 必须与后续模型运行记录一致。
+- `topk`、`prompt_total_chars`、`prompt_token_estimate` 必须为正整数。
+- `contract_version` 与 `wording_version` 必须记录结构契约版本与措辞版本；不得只写“默认值”替代可追溯版本。
+- `comparison_group` 用于把同一文种 / 子类下可比较的 TopK、提示总长或契约措辞候选归组。
+- `comparison_axis` 取值：`baseline` / `topk` / `prompt_total_chars` / `contract_wording` / `combined`。
+- `variant_status` 取值：`planned` / `ready_for_run` / `retired`；标为 `ready_for_run` 前，该文种必须已有 `ready_for_model_run` 的 c03 候选素材记录。
+
 ### 模型运行
 
 - `run_id` 必须唯一，并能追溯到模型输出对象或日志。
 - `c03_query_id` 必须指向 c03 检索结果，且必须匹配同文种候选素材表中 `gate_status=ready_for_model_run` 的 `c03_query_ref`；不得填本地原文路径。
-- `prompt_variant_id` 必须能说明 TopK、提示总长上限与契约措辞版本。
+- `prompt_variant_id` 必须引用 `calibration-variants.csv` 中已登记的变体，且文种、子类、TopK、提示总长、token 估算与契约版本必须一致。
 - `model_endpoint_evidence_ref` 必须指向真实目标模型端点、部署清单或网关证明引用；不得为 `fake`、`mock` / `mocked`、`stub`、`dummy`、`httptest`、`localhost`、`127.0.0.1`、`unit-test`、`local-model`、`dev-server`、`test-endpoint` 等本地假服务或单测证据。
 - `content_security_level` 必须来自 c06 上下文，取值为 `非密` / `敏感` / `涉密`。
 - `first_token_ms` 与 `total_generation_ms` 必须来自真实运行计时；不得用估算值。
@@ -74,8 +85,9 @@
 
 - 候选素材表必须覆盖 c05 9 个高频文种，且不得记录本地原文路径、裸 `各类文件` 目录名、文件名或 Office/PDF 原文扩展名。
 - 候选素材表的 `gate_status` 必须与 `raw_package_count` / `readable_package_count` / `desensitized_batch_ref` / `c03_query_ref` / `c03_retrievable_count` 自洽；未取得脱敏批次、c03 查询引用与正数 c03 可检索样例前不能进入 `ready_for_model_run`。
+- 提示变体表一旦填写，必须有唯一 `variant_id`、c05 文种、子类、正数 TopK、提示总长、token 估算、契约版本、措辞版本、对比组、对比轴与变体状态；`ready_for_run` 状态必须已有同文种 c03 可检索候选。
 - 模型运行记录一旦填写，必须有唯一 `run_id`、真实日期、c03 检索引用、TopK、提示长度、模型信息、真实目标模型端点 / 部署证据、内容密级、首包耗时、总耗时、输出长度与流完成状态；不能用 `pending` 或 `各类文件/` 作为 c03 证据，不能用本地假服务或单测端点替代目标模型。
-- 模型运行记录的 `c03_query_id` 必须能回查到同文种 `ready_for_model_run` 候选行，避免绕过脱敏批次与 c03 可检索数量门禁直接登记目标模型运行。
+- 模型运行记录的 `c03_query_id` 必须能回查到同文种 `ready_for_model_run` 候选行，避免绕过脱敏批次与 c03 可检索数量门禁直接登记目标模型运行；`prompt_variant_id` 必须能回查到同文种 / 子类且参数一致的提示变体，避免运行记录临时写入未经登记的 TopK、提示总长或契约措辞版本。
 - 人工评分记录一旦填写，必须引用已存在的 `run_id`，四维评分必须为 1-5，采纳标签与 `counts_as_adopted` 必须符合 PRD 口径（直接用 / 小改计入采纳，大改 / 弃用不计入）。
 - 校准决策一旦声明 `pass` 或 `fail`，必须给出 TopK、提示总长、契约版本、运行次数、采纳率、首包中位数、总耗时 P95 与证据引用；这些聚合字段必须由 `evidence_refs` 引用的 `calibration-runs.csv` 与 `calibration-reviews.csv` 记录反算得到，不能只填手工聚合值。
 - `evidence_refs` 的每个 `run:<run_id>` 必须指向同文种、已完成且同时匹配所选 TopK / 提示总长 / 契约版本的目标模型运行；每个被引用运行都必须有对应的 `review:<review_record_id>` 人工评分，且评分记录必须指向同一组运行记录。

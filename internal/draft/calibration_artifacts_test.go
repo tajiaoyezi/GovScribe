@@ -207,7 +207,8 @@ func TestC05CalibrationRunRowsStayTraceableWhenPresent(t *testing.T) {
 		for _, field := range []string{"topk", "prompt_total_chars", "prompt_token_estimate"} {
 			requirePositiveIntCell(t, row, index, field, rowNumber)
 		}
-		if c03QueryID := row[index["c03_query_id"]]; strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
+		c03QueryID := requiredCell(t, row, index, "c03_query_id", rowNumber)
+		if strings.EqualFold(c03QueryID, "pending") || c05RawCorpusReferencePattern.MatchString(c03QueryID) {
 			t.Fatalf("calibration runs row %d c03_query_id = %q, want c03 retrieval evidence, not local/raw corpus state", rowNumber, c03QueryID)
 		} else {
 			requireNoSyntheticPoCEvidence(t, c03QueryID, "calibration runs", "c03_query_id", rowNumber)
@@ -450,6 +451,38 @@ func TestC05CalibrationCSVsDoNotExposeRawCorpusArtifacts(t *testing.T) {
 	}
 }
 
+func TestC05ReadyCalibrationCandidateQueryMatching(t *testing.T) {
+	readyQueries := map[string]map[string]bool{
+		"通知": {
+			"c03-query:notice-ready-001": true,
+		},
+		"请示": {
+			"c03-query:request-ready-001": true,
+		},
+	}
+
+	if !hasReadyC05CalibrationCandidateQuery(readyQueries, "通知", "c03-query:notice-ready-001") {
+		t.Fatalf("expected matching doctype/query pair to be accepted")
+	}
+
+	rejected := []struct {
+		name       string
+		doctype    string
+		c03QueryID string
+	}{
+		{name: "different doctype", doctype: "请示", c03QueryID: "c03-query:notice-ready-001"},
+		{name: "unknown query", doctype: "通知", c03QueryID: "c03-query:notice-missing"},
+		{name: "doctype not ready", doctype: "报告", c03QueryID: "c03-query:report-ready-001"},
+	}
+	for _, tc := range rejected {
+		t.Run(tc.name, func(t *testing.T) {
+			if hasReadyC05CalibrationCandidateQuery(readyQueries, tc.doctype, tc.c03QueryID) {
+				t.Fatalf("expected %s/%s to be rejected without a same-doctype ready candidate", tc.doctype, tc.c03QueryID)
+			}
+		})
+	}
+}
+
 func c05HighFreqDoctypeSeen() map[string]bool {
 	return map[string]bool{
 		"通知": false, "请示": false, "报告": false, "函": false, "会议纪要": false,
@@ -483,9 +516,13 @@ func readReadyC05CalibrationCandidateQueries(t *testing.T) map[string]map[string
 
 func requireReadyC05CalibrationCandidateQuery(t *testing.T, readyQueries map[string]map[string]bool, doctype, c03QueryID, source string, rowNumber int) {
 	t.Helper()
-	if !readyQueries[doctype][c03QueryID] {
+	if !hasReadyC05CalibrationCandidateQuery(readyQueries, doctype, c03QueryID) {
 		t.Fatalf("%s row %d c03_query_id = %q has no matching ready_for_model_run candidate for %s", source, rowNumber, c03QueryID, doctype)
 	}
+}
+
+func hasReadyC05CalibrationCandidateQuery(readyQueries map[string]map[string]bool, doctype, c03QueryID string) bool {
+	return readyQueries[doctype][c03QueryID]
 }
 
 type calibrationRunEvidence struct {
